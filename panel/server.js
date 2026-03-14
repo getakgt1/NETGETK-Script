@@ -33,9 +33,13 @@ const requireAuth = (req, res, next) => {
 };
 
 // ── Helpers ───────────────────────────────────────────────────
-const run = (cmd) => {
-    try { return execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim(); }
-    catch (e) { return ''; }
+const run = (cmd, throwOnError = false) => {
+    try { return execSync(cmd, { encoding: 'utf8', timeout: 10000, shell: '/bin/bash' }).trim(); }
+    catch (e) {
+        if (throwOnError) throw e;
+        console.error(`[CMD ERROR] ${cmd}\n`, e.stderr || e.message);
+        return '';
+    }
 };
 
 const readConf = () => {
@@ -254,12 +258,17 @@ app.post('/api/users/create', requireAuth, (req, res) => {
             const exists = run(`id ${username} 2>/dev/null`);
             if (exists) return res.status(400).json({ error: 'Usuario ya existe' });
             
-            run(`useradd -e ${expiryStr} -s /bin/false -M ${username}`);
-            run(`echo "${username}:${password}" | chpasswd`);
+            const addResult = run(`useradd -e ${expiryStr} -s /bin/false -M ${username} 2>&1`);
+            if (addResult && addResult.includes('already exists')) {
+                return res.status(400).json({ error: 'Usuario ya existe' });
+            }
+            // Usar printf para manejar contraseñas con caracteres especiales
+            const safePw = password.replace(/'/g, "'\\''");
+            run(`printf '%s:%s\\n' '${username}' '${safePw}' | chpasswd`);
             
             fs.mkdirSync(USERS_DIR, { recursive: true });
             fs.writeFileSync(path.join(USERS_DIR, `${username}.info`),
-                `USERNAME=${username}\nPASSWORD=${password}\nTYPE=ssh\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`);
+                `USERNAME=${username}\nPASSWORD=${password}\nTYPE=ssh\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\nDIAS=${days || 30}\n`);
             
             return res.json({ ok: true });
         }
