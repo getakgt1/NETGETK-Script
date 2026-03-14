@@ -38,7 +38,7 @@ create_ssh() {
     
     # Crear usuario sin home, con shell restringida
     useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME" 2>/dev/null
-    echo "$USERNAME:$PASSWORD" | chpasswd
+    printf '%s:%s\n' "$USERNAME" "$PASSWORD" | chpasswd
     
     # Guardar info del usuario
     mkdir -p "$USERS_DIR"
@@ -123,7 +123,7 @@ list_users() {
     echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
     
     if [[ -d "$USERS_DIR" ]]; then
-        for f in "$USERS_DIR"/*.info 2>/dev/null; do
+        for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
             source "$f"
             
@@ -329,7 +329,7 @@ clean_expired() {
     COUNT=0
     
     if [[ -d "$USERS_DIR" ]]; then
-        for f in "$USERS_DIR"/*.info 2>/dev/null; do
+        for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
             source "$f"
             if [[ "$EXPIRY" < "$TODAY" ]]; then
