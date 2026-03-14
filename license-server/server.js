@@ -11,7 +11,7 @@ const crypto     = require('crypto');
 const bodyParser = require('body-parser');
 
 const app  = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // ─── Base de datos simple en JSON ────────────────────────────
 // En producción usa MongoDB o PostgreSQL
