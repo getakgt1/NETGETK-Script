@@ -1,0 +1,233 @@
+#!/bin/bash
+# ============================================================
+#   GTKVPN Script - Manager Principal
+#   By: NETGETK
+# ============================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+GRAY='\033[0;37m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+INSTALL_DIR="/etc/gtkvpn"
+VERSION="1.0"
+
+# Verificar root
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}[!] Ejecutar como root${NC}"; exit 1
+fi
+
+# Verificar instalación
+if [[ ! -d $INSTALL_DIR ]]; then
+    echo -e "${RED}[!] GTKVPN Script no está instalado${NC}"
+    echo -e "${YELLOW}    Ejecuta el setup primero${NC}"; exit 1
+fi
+
+# Colores de estado
+st_on()  { echo -e "${GREEN}[ON]${NC}"; }
+st_off() { echo -e "${RED}[OFF]${NC}"; }
+st_beta(){ echo -e "${YELLOW}(#BETA)${NC}"; }
+
+svc_st() {
+    systemctl is-active --quiet "$1" 2>/dev/null && st_on || st_off
+}
+
+# ─── MENÚ PRINCIPAL ──────────────────────────────────────────
+show_main() {
+    bash $INSTALL_DIR/banner.sh 2>/dev/null
+
+    echo ""
+    echo -e " ${WHITE}[01]${NC} ⇒ ${CYAN}CONTROL USUARIOS (SSH/SSL/VMESS)${NC}"
+    echo -e " ${WHITE}[02]${NC} ⇒ ${YELLOW}OPTIMIZAR VPS${NC}    $(svc_st gtkvpn-optimizer)"
+    echo -e " ${WHITE}[03]${NC} ⇒ ${YELLOW}CONTADOR ONLINE USERS${NC}"
+    echo -e " ${WHITE}[04]${NC} ⇒ ${YELLOW}AUTOINICIAR SCRIPT${NC}   $(svc_st gtkvpn-autostart)"
+    echo -e " ${WHITE}[05]${NC} ⇒ ${CYAN}INSTALADOR DE PROTOCOLOS${NC}"
+    echo ""
+    echo -e " ${WHITE}[06]${NC} ⇒ ${RED}[!] UPDATE / REMOVE${NC}   |  ${WHITE}[0]${NC} ⇒ ${RED}[ SALIR ]${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -ne " ${WHITE}► Opcion :${NC} "
+    read OPT
+    case $OPT in
+        1) menu_usuarios ;;
+        2) bash $INSTALL_DIR/back/optimizador.sh ;;
+        3) bash $INSTALL_DIR/back/contador.sh ;;
+        4) menu_autostart ;;
+        5) menu_protocolos ;;
+        6) menu_update ;;
+        0) echo -e "${YELLOW}Hasta luego!${NC}"; exit 0 ;;
+        *) show_main ;;
+    esac
+}
+
+# ─── MENÚ PROTOCOLOS ──────────────────────────────────────────
+menu_protocolos() {
+    bash $INSTALL_DIR/banner.sh 2>/dev/null
+    echo ""
+    echo -e "${MAGENTA} 🔧 INSTALACION DE PROTOCOLOS${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    
+    # Estado de cada protocolo
+    SSH_ST=$(systemctl is-active --quiet ssh 2>/dev/null && st_on || st_off)
+    NGINX_ST=$(systemctl is-active --quiet nginx 2>/dev/null && st_on || st_off)
+    SSL_ST=$([[ -f /etc/letsencrypt/live/*/fullchain.pem ]] 2>/dev/null && st_on || st_off)
+    XRAY_ST=$(systemctl is-active --quiet xray 2>/dev/null && st_on || st_off)
+    SOCKS_ST=$([[ -f /etc/gtkvpn/config.conf ]] && grep -q "SOCKS_ENABLED=true" /etc/gtkvpn/config.conf 2>/dev/null && st_on || st_off)
+    SLOWDNS_ST=$(systemctl is-active --quiet slowdns 2>/dev/null && st_on || st_off)
+    UDP_ST=$(systemctl is-active --quiet udp-custom 2>/dev/null && st_on || st_off)
+    
+    printf " ${WHITE}[1]${NC}  ⇒ OpenSSH          %-12s" "$SSH_ST"
+    printf " ${WHITE}[2]${NC}  ⇒ WEB-NGinx        %s\n" "$NGINX_ST"
+    printf " ${WHITE}[3]${NC}  ⇒ SSL/TLS          %-12s" "$SSL_ST"
+    printf " ${WHITE}[4]${NC}  ⇒ Xray (V2Ray)     %s\n" "$XRAY_ST"
+    printf " ${WHITE}[5]${NC}  ⇒ SOCKS5 Python    %-12s" "$SOCKS_ST"
+    printf " ${WHITE}[6]${NC}  ⇒ SlowDNS          %s\n" "$SLOWDNS_ST"
+    printf " ${WHITE}[7]${NC}  ⇒ UDP Custom       %-12s" "$UDP_ST"
+    printf " ${WHITE}[8]${NC}  ⇒ BadVPN-UDPgw     %s\n" "$(st_beta)"
+    printf " ${WHITE}[9]${NC}  ⇒ Firewall/UFW     %-12s" "$(svc_st ufw)"
+    printf " ${WHITE}[10]${NC} ⇒ SpeedTest        \n"
+    echo ""
+    echo -e " ${WHITE}[0]${NC}  ⇒ ${RED}[ REGRESAR ]${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    echo -ne " ${WHITE}► Opcion :${NC} "
+    read OPT
+    case $OPT in
+        1) bash $INSTALL_DIR/Server/ssh.sh; menu_protocolos ;;
+        2) bash $INSTALL_DIR/Server/ssl.sh nginx; menu_protocolos ;;
+        3) bash $INSTALL_DIR/Server/ssl.sh cert; menu_protocolos ;;
+        4) bash $INSTALL_DIR/Server/xray.sh; menu_protocolos ;;
+        5) bash $INSTALL_DIR/Server/socks5.sh; menu_protocolos ;;
+        6) bash $INSTALL_DIR/Server/slowdns.sh; menu_protocolos ;;
+        7) bash $INSTALL_DIR/Server/udp.sh; menu_protocolos ;;
+        8) bash $INSTALL_DIR/Server/udp.sh badvpn; menu_protocolos ;;
+        9) bash $INSTALL_DIR/back/firewall.sh; menu_protocolos ;;
+        10) bash $INSTALL_DIR/back/speedtest.sh; menu_protocolos ;;
+        0) show_main ;;
+        *) menu_protocolos ;;
+    esac
+}
+
+# ─── MENÚ USUARIOS ────────────────────────────────────────────
+menu_usuarios() {
+    bash $INSTALL_DIR/banner.sh 2>/dev/null
+    echo ""
+    echo -e "${MAGENTA} 👥 CONTROL DE USUARIOS${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    echo -e " ${WHITE}[1]${NC}  ⇒ Crear usuario SSH"
+    echo -e " ${WHITE}[2]${NC}  ⇒ Eliminar usuario SSH"
+    echo -e " ${WHITE}[3]${NC}  ⇒ Ver usuarios activos"
+    echo -e " ${WHITE}[4]${NC}  ⇒ Listar todos los usuarios"
+    echo -e " ${WHITE}[5]${NC}  ⇒ Bloquear usuario"
+    echo -e " ${WHITE}[6]${NC}  ⇒ Desbloquear usuario"
+    echo -e " ${WHITE}[7]${NC}  ⇒ Crear usuario XRAY/VMess"
+    echo -e " ${WHITE}[8]${NC}  ⇒ Eliminar usuario XRAY"
+    echo -e " ${WHITE}[9]${NC}  ⇒ Renovar usuario (extender días)"
+    echo -e " ${WHITE}[10]${NC} ⇒ Eliminar usuarios expirados"
+    echo ""
+    echo -e " ${WHITE}[0]${NC}  ⇒ ${RED}[ REGRESAR ]${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    echo -ne " ${WHITE}► Opcion :${NC} "
+    read OPT
+    case $OPT in
+        1)  bash $INSTALL_DIR/back/usuarios.sh create_ssh; menu_usuarios ;;
+        2)  bash $INSTALL_DIR/back/usuarios.sh delete_ssh; menu_usuarios ;;
+        3)  bash $INSTALL_DIR/back/usuarios.sh active; menu_usuarios ;;
+        4)  bash $INSTALL_DIR/back/usuarios.sh list; menu_usuarios ;;
+        5)  bash $INSTALL_DIR/back/usuarios.sh block; menu_usuarios ;;
+        6)  bash $INSTALL_DIR/back/usuarios.sh unblock; menu_usuarios ;;
+        7)  bash $INSTALL_DIR/back/usuarios.sh create_xray; menu_usuarios ;;
+        8)  bash $INSTALL_DIR/back/usuarios.sh delete_xray; menu_usuarios ;;
+        9)  bash $INSTALL_DIR/back/usuarios.sh renew; menu_usuarios ;;
+        10) bash $INSTALL_DIR/back/usuarios.sh clean; menu_usuarios ;;
+        0)  show_main ;;
+        *)  menu_usuarios ;;
+    esac
+}
+
+# ─── AUTOSTART ─────────────────────────────────────────────────
+menu_autostart() {
+    echo ""
+    echo -e "${CYAN}[*] Configurando autostart...${NC}"
+    
+    if systemctl is-enabled --quiet gtkvpn-autostart 2>/dev/null; then
+        echo -e "${YELLOW}[!] Autostart ya está activo. ¿Desactivar? (s/n):${NC} "
+        read CONF
+        if [[ "$CONF" == "s" || "$CONF" == "S" ]]; then
+            systemctl disable gtkvpn-autostart 2>/dev/null
+            echo -e "${RED}[-] Autostart desactivado${NC}"
+        fi
+    else
+        # Crear servicio systemd
+        cat > /etc/systemd/system/gtkvpn-autostart.service << SYSD
+[Unit]
+Description=GTKVPN Script Autostart
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/gtkvpn/back/optimizador.sh auto
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+SYSD
+        systemctl daemon-reload
+        systemctl enable gtkvpn-autostart 2>/dev/null
+        echo -e "${GREEN}[+] Autostart activado${NC}"
+    fi
+    
+    sleep 2
+    show_main
+}
+
+# ─── UPDATE / REMOVE ───────────────────────────────────────────
+menu_update() {
+    bash $INSTALL_DIR/banner.sh 2>/dev/null
+    echo ""
+    echo -e "${MAGENTA} 🔄 UPDATE / REMOVE${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    echo -e " ${WHITE}[1]${NC} ⇒ Actualizar GTKVPN Script"
+    echo -e " ${WHITE}[2]${NC} ⇒ Ver changelog"
+    echo -e " ${WHITE}[3]${NC} ⇒ ${RED}Desinstalar GTKVPN Script${NC}"
+    echo ""
+    echo -e " ${WHITE}[0]${NC} ⇒ ${RED}[ REGRESAR ]${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
+    echo -ne " ${WHITE}► Opcion :${NC} "
+    read OPT
+    case $OPT in
+        1)
+            echo -e "${CYAN}[*] Actualizando...${NC}"
+            wget -q -O /tmp/gtkvpn_update.sh \
+                "https://raw.githubusercontent.com/NETGETK/GTKVPN-Script/main/setup" 2>/dev/null
+            if [[ -f /tmp/gtkvpn_update.sh ]]; then
+                bash /tmp/gtkvpn_update.sh update
+            else
+                echo -e "${RED}[!] No se pudo descargar la actualización${NC}"
+            fi
+            sleep 2; show_main ;;
+        2)
+            cat /etc/gtkvpn/changelog 2>/dev/null || echo -e "${YELLOW}Sin changelog disponible${NC}"
+            sleep 3; menu_update ;;
+        3)
+            echo -ne "${RED}[!] ¿Seguro que deseas desinstalar? (si/no): ${NC}"
+            read CONF
+            if [[ "$CONF" == "si" ]]; then
+                systemctl disable gtkvpn-autostart 2>/dev/null
+                rm -rf /etc/gtkvpn
+                rm -f /usr/local/bin/menu
+                echo -e "${GREEN}[+] GTKVPN Script eliminado${NC}"
+                exit 0
+            fi
+            menu_update ;;
+        0) show_main ;;
+        *) menu_update ;;
+    esac
+}
+
+# ─── INICIAR ───────────────────────────────────────────────────
+show_main
