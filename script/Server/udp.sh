@@ -56,10 +56,8 @@ install_udp() {
     mkdir -p $UDP_DIR
     ARCH=$(uname -m)
     if [[ "$ARCH" == "x86_64" ]]; then
-        cp server-amd64 $UDP_DIR/udp-custom 2>/dev/null || \
         curl -sL "https://github.com/http-custom/udp-custom/releases/latest/download/server-amd64" -o $UDP_DIR/udp-custom
     elif [[ "$ARCH" == "aarch64" ]]; then
-        cp server-arm64 $UDP_DIR/udp-custom 2>/dev/null || \
         curl -sL "https://github.com/http-custom/udp-custom/releases/latest/download/server-arm64" -o $UDP_DIR/udp-custom
     fi
     chmod +x $UDP_DIR/udp-custom
