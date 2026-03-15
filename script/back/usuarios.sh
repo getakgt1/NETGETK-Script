@@ -97,33 +97,48 @@ active_users() {
     declare -A SEEN
     local total=0
 
+    # Dropbear: verificar PID activo en sistema y sin Exit en auth.log
+    while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        local has_exit
+        has_exit=$(grep "dropbear\[${pid}\].*Exit" /var/log/auth.log 2>/dev/null)
+        [[ -n "$has_exit" ]] && continue
+        local user
+        user=$(grep "dropbear\[${pid}\].*Password auth succeeded" /var/log/auth.log 2>/dev/null | awk -F"'" '{print $2}')
+        [[ -z "$user" || "$user" == "root" ]] && continue
+        [[ -n "${SEEN[$user]}" ]] && continue
+        kill -0 "$pid" 2>/dev/null || continue
+        SEEN[$user]=1
+        local conns hora
+        conns=$(grep "Password auth succeeded for '${user}'" /var/log/auth.log 2>/dev/null | \
+                awk '{match($0,/dropbear\[([0-9]+)\]/,a); print a[1]}' | \
+                while read p; do kill -0 "$p" 2>/dev/null && echo "$p"; done | wc -l)
+        [[ $conns -lt 1 ]] && conns=1
+        hora=$(grep "dropbear\[${pid}\].*Password auth succeeded" /var/log/auth.log 2>/dev/null | awk '{print $3}')
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
+        (( total++ ))
+    done < <(grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | \
+             awk '{match($0,/dropbear\[([0-9]+)\]/,a); print a[1]}' | sort -u)
+
+    # OpenSSH normal via ps
     while IFS= read -r user; do
         [[ -z "$user" || "$user" == "root" || "$user" == "sshd" || "$user" == "nobody" ]] && continue
         [[ -n "${SEEN[$user]}" ]] && continue
         SEEN[$user]=1
-
         local conns hora
         conns=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | wc -l)
-        local ll le
-        ll=$(grep "succeeded for '${user}'" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
-        le=$(grep "Exit (${user})" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
-        [[ -n "$ll" && "$ll" > "$le" ]] && (( conns++ ))
         [[ $conns -lt 1 ]] && conns=1
-
         hora=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}')
-        [[ -z "$hora" ]] && hora=$(grep "succeeded for '${user}'" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $3}')
-        [[ -z "$hora" ]] && hora="--:--"
-
         printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
         (( total++ ))
-
-    done < <({ ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}'; grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | awk -F"'" '{print $2}'; } | grep -Ev "^(root|sshd|nobody)$" | sort -u)
+    done < <(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}' | grep -Ev "^(root|sshd|nobody)$" | sort -u)
 
     [[ $total -eq 0 ]] && echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
     echo ""
     echo -e " ${WHITE}Total SSH activos: ${GREEN}${total}${NC}"
     press_enter
 }
+
 
 
 # ─── LISTAR USUARIOS ─────────────────────────────────────────
