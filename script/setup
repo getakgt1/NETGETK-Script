@@ -8,8 +8,8 @@
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; WHITE='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'
 
-REPO="https://raw.githubusercontent.com/NETGETK/NETGETK-Script/main"
-INSTALL_DIR="/etc/netgetk"
+REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master"
+INSTALL_DIR="/etc/gtkvpn"
 LICENSE_SERVER="http://localhost:4000"   # Tu servidor de licencias
 VERSION="1.0"
 
@@ -111,7 +111,7 @@ apt upgrade -y -qq 2>/dev/null
 echo -e "${CYAN}[2/5] Instalando dependencias...${NC}"
 apt install -y -qq curl wget git unzip net-tools lsof python3 python3-pip \
     openssh-server nginx fail2ban ufw jq bc screen cron vnstat htop openssl \
-    uuid-runtime 2>/dev/null
+    uuid-runtime passwd login whois iptables netcat-openbsd 2>/dev/null
 
 # Node.js 18
 if ! command -v node &>/dev/null; then
@@ -133,16 +133,29 @@ mkdir -p /var/log/xray
 # ── Descargar archivos del script ─────────────────────────────
 echo -e "${CYAN}[4/5] Descargando archivos...${NC}"
 mkdir -p "$INSTALL_DIR/Server" "$INSTALL_DIR/back" "$INSTALL_DIR/users" \
-         "$INSTALL_DIR/panel/public" /var/log/netgetk
+         "$INSTALL_DIR/panel/public" /var/log/gtkvpn /var/log/xray
 
-for f in manager banner.sh Server/ssh.sh Server/xray.sh Server/ssl.sh \
-          Server/socks5.sh Server/slowdns.sh Server/udp.sh \
-          back/usuarios.sh back/contador.sh back/optimizador.sh \
-          back/firewall.sh back/speedtest.sh \
-          panel/server.js panel/package.json panel/public/index.html; do
-    wget -q -O "$INSTALL_DIR/$f" "$REPO/$f" 2>/dev/null
-    chmod +x "$INSTALL_DIR/$f" 2>/dev/null
+# Descargar scripts
+for f in script/manager script/banner.sh script/Server/ssh.sh script/Server/xray.sh \
+          script/Server/ssl.sh script/Server/socks5.sh script/Server/slowdns.sh \
+          script/Server/udp.sh script/back/usuarios.sh script/back/contador.sh \
+          script/back/optimizador.sh script/back/firewall.sh script/back/speedtest.sh; do
+    fname=$(basename $f)
+    dir=$(dirname $f | sed "s|script/||")
+    [[ "$dir" == "script" ]] && dir=""
+    dest="$INSTALL_DIR/${dir:+$dir/}$fname"
+    mkdir -p "$(dirname $dest)"
+    wget -q -O "$dest" "$REPO/$f" 2>/dev/null
+    chmod +x "$dest" 2>/dev/null
 done
+
+# Descargar panel
+for f in panel/server.js panel/package.json panel/public/index.html; do
+    wget -q -O "$INSTALL_DIR/$f" "$REPO/$f" 2>/dev/null
+done
+
+# Instalar dependencias del panel
+cd "$INSTALL_DIR/panel" && npm install --silent 2>/dev/null
 
 # ── Configuración inicial ──────────────────────────────────────
 echo -e "${CYAN}[5/5] Configurando sistema...${NC}"
@@ -160,6 +173,8 @@ CONF
 
 # Comando global menu
 ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu
+# Compatibilidad: crear también /etc/netgetk apuntando a /etc/gtkvpn
+[[ ! -d /etc/netgetk ]] && ln -sf /etc/gtkvpn /etc/netgetk 2>/dev/null || true
 chmod +x /usr/local/bin/menu
 
 # SSH optimización básica
@@ -177,7 +192,6 @@ ufw --force enable 2>/dev/null
 
 # Instalar panel web
 cd "$INSTALL_DIR/panel"
-npm install --silent 2>/dev/null
 pm2 delete netgetk-panel 2>/dev/null
 pm2 start server.js --name netgetk-panel 2>/dev/null
 pm2 startup 2>/dev/null
