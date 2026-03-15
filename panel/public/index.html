@@ -162,14 +162,35 @@ tr:hover td { background: rgba(255,255,255,.02); }
 /* ─ ACCIONES RESPONSIVE ──────────────────────────────────── */
 .actions-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
 .actions-wrap .btn { padding: 5px 9px; font-size: 11px; border-radius: 5px; }
+
+/* Tarjetas móvil */
+.user-card { display:none; }
 @media (max-width: 768px) {
   .hide-mobile { display: none !important; }
-  th, td { padding: 8px 8px; font-size: 12px; }
-  .actions-wrap { flex-direction: column; gap: 3px; }
-  .actions-wrap .btn { width: 100%; justify-content: center; font-size: 11px; padding: 5px 6px; }
   .stat-box { min-width: 60px; }
   .stat-box .val { font-size: 22px; }
+  /* Ocultar tabla, mostrar tarjetas */
+  .users-table { display: none !important; }
+  .user-cards  { display: block !important; }
 }
+.user-cards { display: none; }
+.user-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.user-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.user-card-name { font-weight: 700; font-size: 15px; }
+.user-card-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+.user-card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.user-card-actions .btn { justify-content: center; padding: 8px; font-size: 12px; }
 
 /* ─ MODAL DETALLES ───────────────────────────────────────── */
 #modal-user-details {
@@ -441,6 +462,8 @@ textarea { resize: vertical; font-family: monospace; font-size: 12px; }
         <tbody id="users-tbody"></tbody>
       </table>
     </div>
+    <!-- Tarjetas móvil -->
+    <div class="user-cards" id="users-cards"></div>
   </div>
 
   <!-- PAGE: XRAY -->
@@ -906,6 +929,37 @@ async function loadUsers() {
       <div class="lbl">${l}</div>
     </div>
   `).join('');
+
+  // Renderizar tarjetas para móvil
+  document.getElementById('users-cards').innerHTML = users.length ? users.map(u => `
+    <div class="user-card">
+      <div class="user-card-header">
+        <div>
+          <span class="user-card-name">${u.USERNAME}</span>
+          <span class="badge ${u.TYPE==='xray'?'badge-xray':'badge-ssh'}" style="margin-left:8px">${u.TYPE||'ssh'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          ${u.connected
+            ? `<span class="status-dot status-on"></span><small style="color:var(--green)">${u.connCount||1}</small>`
+            : `<span class="status-dot status-off"></span>`}
+          <span class="badge ${u.expired?'badge-expired':(u.blocked?'badge-blocked':'badge-active')}" style="font-size:10px">
+            ${u.expired?'Exp':(u.blocked?'Bloq':'Activo')}
+          </span>
+        </div>
+      </div>
+      <div class="user-card-meta">
+        <span style="color:var(--text2);font-size:11px">📅 Expira:</span>
+        <span style="font-size:11px;font-family:monospace;color:${u.expired?'var(--red)':'var(--text2)'}">${u.EXPIRY||'N/A'}</span>
+      </div>
+      <div class="user-card-actions">
+        <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
+        <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
+        <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}')">⚙ Límite</button>
+        <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓 Desbloquear':'🔒 Bloquear'}</button>
+        <button class="btn btn-danger" style="grid-column:span 2" onclick="deleteUser('${u.USERNAME}')">🗑 Eliminar</button>
+      </div>
+    </div>
+  `).join('') : '<p style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</p>';
 
   document.getElementById('users-tbody').innerHTML = users.length ? users.map(u => `
     <tr>
