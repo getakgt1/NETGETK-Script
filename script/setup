@@ -116,7 +116,7 @@ echo -e "  ${GREEN}✓ Sistema actualizado${NC}"
 echo -e "${CYAN}[2/5] Instalando dependencias...${NC}"
 apt install -y -qq \
     curl wget git unzip net-tools lsof \
-    python3 python3-pip \
+    python3 python3-pip python3-websockets \
     openssh-server nginx fail2ban ufw \
     jq bc screen cron vnstat htop \
     openssl uuid-runtime \
