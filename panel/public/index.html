@@ -162,6 +162,10 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .badge-active   { background: rgba(63,185,80,.15); color: var(--green); }
 .badge-expired  { background: rgba(248,81,73,.15); color: var(--red); }
 .badge-blocked  { background: rgba(255,193,7,.15); color: #ffc107; }
+.btn-warning    { background: rgba(255,193,7,.15); color: #ffc107; border: 1px solid rgba(255,193,7,.3); }
+.btn-warning:hover { background: rgba(255,193,7,.3); }
+.btn-info       { background: rgba(88,166,255,.15); color: #58a6ff; border: 1px solid rgba(88,166,255,.3); }
+.btn-info:hover { background: rgba(88,166,255,.3); }
 .badge-blocked  { background: rgba(210,153,34,.15); color: var(--yellow); }
 .badge-xray     { background: rgba(88,166,255,.15); color: var(--blue); }
 .badge-ssh      { background: rgba(188,140,255,.15); color: var(--purple); }
@@ -851,10 +855,36 @@ async function loadUsers() {
       <td>
         <button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.USERNAME}')">
           ${u.blocked?'Desbloquear':'Bloquear'}</button>
+        <button class="btn btn-warning btn-sm" onclick="renewUser('${u.USERNAME}')">Renovar</button>
+        <button class="btn btn-info btn-sm" onclick="setLimit('${u.USERNAME}')">Límite</button>
         <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.USERNAME}')">Eliminar</button>
       </td>
     </tr>
   `).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
+}
+
+async function renewUser(username) {
+  const days = prompt(`Renovar ${username}\n¿Cuántos días agregar?`, '30');
+  if (!days) return;
+  const r = await fetch(`${API}/api/users/${username}/renew`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ days: parseInt(days) })
+  });
+  const d = await r.json();
+  if (d.ok) { toast(`✓ ${username} renovado hasta ${d.expiry}`, true); loadUsers(); }
+  else toast('✗ Error: ' + d.error, false);
+}
+
+async function setLimit(username) {
+  const limit = prompt(`Límite de conexiones para ${username}:`, '100');
+  if (!limit) return;
+  const r = await fetch(`${API}/api/users/${username}/limit`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ limit: parseInt(limit) })
+  });
+  const d = await r.json();
+  if (d.ok) { toast(`✓ Límite de ${username} actualizado a ${d.limit}`, true); loadUsers(); }
+  else toast('✗ Error: ' + d.error, false);
 }
 
 function openCreateUser() {
