@@ -91,67 +91,40 @@ active_users() {
     echo -e "${CYAN}║                   USUARIOS CONECTADOS                        ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
+    echo -e " ${WHITE}USUARIO SSH          CONEXIONES         HORA LOGIN${NC}"
+    echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
 
     declare -A SEEN
-    declare -A USER_IP
-    declare -A USER_HORA
-    declare -A USER_CONNS
+    local total=0
 
-    # FUENTE 1: who (sesiones con TTY/shell real)
-    while IFS= read -r line; do
-        user=$(echo "$line" | awk '{print $1}')
-        [[ -z "$user" || "$user" == "root" || "$user" == "sshd" || "$user" == "nobody" ]] && continue
-        SEEN[$user]=1
-        USER_HORA[$user]=$(echo "$line" | awk '{print $3, $4}')
-        USER_IP[$user]=$(echo "$line" | grep -oP '\(\K[^\)]+' | head -1)
-    done < <(who 2>/dev/null)
-
-    # FUENTE 2: ss - conexiones TCP activas al puerto SSH (tuneles sin shell)
-    SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
-    SSH_PORT=${SSH_PORT:-22}
-    while IFS= read -r ip; do
-        [[ -z "$ip" ]] && continue
-        usr=$(last -n 50 2>/dev/null | awk -v i="$ip" '$3==i {print $1; exit}')
-        [[ -z "$usr" || "$usr" == "root" || "$usr" == "reboot" || "$usr" == "wtmp" ]] && continue
-        if [[ -z "${SEEN[$usr]}" ]]; then
-            SEEN[$usr]=1
-            USER_IP[$usr]="$ip"
-            USER_HORA[$usr]=$(date +"%H:%M")
-        fi
-    done < <(ss -tnp 2>/dev/null | awk -v p=":$SSH_PORT" '$4~p && $1=="ESTAB" {split($5,a,":"); print a[1]}' | sort -u)
-
-    # FUENTE 3: ps aux sshd (procesos sshd activos por usuario)
     while IFS= read -r user; do
         [[ -z "$user" || "$user" == "root" || "$user" == "sshd" || "$user" == "nobody" ]] && continue
-        if [[ -z "${SEEN[$user]}" ]]; then
-            SEEN[$user]=1
-            USER_HORA[$user]=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}')
-            USER_IP[$user]=""
-        fi
+        [[ -n "${SEEN[$user]}" ]] && continue
+        SEEN[$user]=1
+
+        local conns hora
         conns=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | wc -l)
-        USER_CONNS[$user]=$conns
-    done < <(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}' | sort -u)
+        local ll le
+        ll=$(grep "succeeded for '${user}'" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
+        le=$(grep "Exit (${user})" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
+        [[ -n "$ll" && "$ll" > "$le" ]] && (( conns++ ))
+        [[ $conns -lt 1 ]] && conns=1
 
-    # Mostrar resultados
-    if [[ ${#SEEN[@]} -eq 0 ]]; then
-        echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
-    else
-        echo -e " ${WHITE}USUARIO SSH          DESDE              HORA         CONNS${NC}"
-        echo -e "${CYAN} ──────────────────────────────────────────────────────────${NC}"
-        for user in "${!SEEN[@]}"; do
-            ip="${USER_IP[$user]:-local}"
-            hora="${USER_HORA[$user]:-??:??}"
-            conns="${USER_CONNS[$user]:-1}"
-            printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%-12s${NC} ${WHITE}[%s]${NC}\n" \
-                "$user" "$ip" "$hora" "$conns"
-        done
-    fi
+        hora=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}')
+        [[ -z "$hora" ]] && hora=$(grep "succeeded for '${user}'" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $3}')
+        [[ -z "$hora" ]] && hora="--:--"
 
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
+        (( total++ ))
+
+    done < <({ ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}'; grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | awk -F"'" '{print $2}'; } | grep -Ev "^(root|sshd|nobody)$" | sort -u)
+
+    [[ $total -eq 0 ]] && echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
     echo ""
-    total=${#SEEN[@]}
     echo -e " ${WHITE}Total SSH activos: ${GREEN}${total}${NC}"
     press_enter
 }
+
 
 # ─── LISTAR USUARIOS ─────────────────────────────────────────
 list_users() {
