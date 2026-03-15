@@ -203,7 +203,7 @@ menu_update() {
         1)
             echo -e "${CYAN}[*] Actualizando...${NC}"
             wget -q -O /tmp/gtkvpn_update.sh \
-                "https://raw.githubusercontent.com/NETGETK/GTKVPN-Script/main/setup" 2>/dev/null
+                "https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup" 2>/dev/null
             if [[ -f /tmp/gtkvpn_update.sh ]]; then
                 bash /tmp/gtkvpn_update.sh update
             else
@@ -218,7 +218,7 @@ menu_update() {
             read CONF
             if [[ "$CONF" == "si" ]]; then
                 systemctl disable gtkvpn-autostart 2>/dev/null
-                rm -rf /etc/gtkvpn
+                rm -rf /etc/gtkvpn /etc/netgetk
                 rm -f /usr/local/bin/menu
                 echo -e "${GREEN}[+] GTKVPN Script eliminado${NC}"
                 exit 0
