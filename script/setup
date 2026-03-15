@@ -77,8 +77,8 @@ VALIDATE_RESP=$(curl -s --max-time 10 \
     -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}" 2>/dev/null)
 
 STATUS=$(echo "$VALIDATE_RESP" | grep -o 'status":"[^"]*' | cut -d'"' -f4)
-MSG=$(echo "$VALIDATE_RESP"    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message','Error de conexión'))" 2>/dev/null)
-OWNER=$(echo "$VALIDATE_RESP"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('owner',''))" 2>/dev/null)
+MSG=$(echo "$VALIDATE_RESP" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+OWNER=$(echo "$VALIDATE_RESP" | grep -o '"owner":"[^"]*"' | cut -d'"' -f4)
 EXPIRY=$(echo "$VALIDATE_RESP" | grep -o '"expiry":"[^"]*"' | cut -d'"' -f4)
 
 if [[ "$STATUS" != "ok" ]]; then
