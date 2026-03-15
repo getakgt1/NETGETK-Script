@@ -287,10 +287,28 @@ menu_update() {
             echo -ne "${RED}[!] ¿Seguro que deseas desinstalar? (si/no): ${NC}"
             read CONF
             if [[ "$CONF" == "si" ]]; then
-                systemctl disable gtkvpn-autostart 2>/dev/null
+                echo -e "${CYAN}[*] Desinstalando servicios...${NC}"
+                # Detener y deshabilitar servicios
+                for svc in gtkvpn-autostart ssh-ws xray stunnel4 nginx fail2ban; do
+                    systemctl stop $svc 2>/dev/null
+                    systemctl disable $svc 2>/dev/null
+                done
+                # Eliminar archivos del script
                 rm -rf /etc/gtkvpn /etc/netgetk
                 rm -f /usr/local/bin/menu
-                echo -e "${GREEN}[+] GTKVPN Script eliminado${NC}"
+                rm -f /etc/systemd/system/ssh-ws.service
+                rm -f /etc/systemd/system/gtkvpn-autostart.service
+                rm -f /usr/local/bin/ssh-ws.py
+                # Eliminar reglas UFW agregadas
+                ufw delete allow 80/tcp 2>/dev/null
+                ufw delete allow 443/tcp 2>/dev/null
+                ufw delete allow 2095/tcp 2>/dev/null
+                ufw delete allow 32595/tcp 2>/dev/null
+                ufw delete allow 8080/tcp 2>/dev/null
+                # Limpiar crontab
+                crontab -l 2>/dev/null | grep -v gtkvpn | grep -v netgetk | crontab -
+                systemctl daemon-reload
+                echo -e "${GREEN}[+] GTKVPN Script eliminado completamente${NC}"
                 exit 0
             fi
             menu_update ;;
