@@ -308,6 +308,28 @@ PYEOF
 # ─── RENOVAR USUARIO ──────────────────────────────────────────
 renew_user() {
     echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║                   RENOVAR USUARIO                            ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e " ${WHITE}Usuarios disponibles:${NC}"
+    echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
+    if [[ -d "$USERS_DIR" ]]; then
+        for f in "$USERS_DIR"/*.info; do
+            [[ -f "$f" ]] || continue
+            source "$f"
+            TODAY=$(date +%Y-%m-%d)
+            if [[ "$EXPIRY" < "$TODAY" ]]; then
+                STATUS="${RED}EXPIRADO${NC}"
+            else
+                STATUS="${GREEN}ACTIVO${NC}"
+            fi
+            printf " ${CYAN}%-18s${NC} ${YELLOW}expira: %-12s${NC} %b\n" "$USERNAME" "$EXPIRY" "$STATUS"
+        done
+    else
+        echo -e " ${YELLOW}Sin usuarios registrados${NC}"
+    fi
+    echo ""
     echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read USERNAME
     echo -ne " ${WHITE}Nuevos días : ${NC}"; read DIAS
     [[ -z "$DIAS" ]] && DIAS=30
