@@ -85,6 +85,23 @@ delete_ssh() {
 }
 
 # ─── VER USUARIOS ACTIVOS ─────────────────────────────────────
+get_session_time_dropbear() {
+    local pid="$1"
+    [[ -z "$pid" ]] && { echo "00:00:00"; return; }
+    local etime
+    etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
+    [[ -z "$etime" ]] && { echo "00:00:00"; return; }
+    local days=0 hours=0 mins=0 secs=0
+    if   [[ "$etime" =~ ^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+        days=${BASH_REMATCH[1]}; hours=${BASH_REMATCH[2]}; mins=${BASH_REMATCH[3]}; secs=${BASH_REMATCH[4]}
+    elif [[ "$etime" =~ ^([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+        hours=${BASH_REMATCH[1]}; mins=${BASH_REMATCH[2]}; secs=${BASH_REMATCH[3]}
+    elif [[ "$etime" =~ ^([0-9]+):([0-9]+)$ ]]; then
+        mins=${BASH_REMATCH[1]}; secs=${BASH_REMATCH[2]}
+    fi
+    printf "%02d:%02d:%02d" "$(( days*24 + hours ))" "$(( 10#$mins ))" "$(( 10#$secs ))"
+}
+
 active_users() {
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -114,7 +131,7 @@ active_users() {
                 awk '{match($0,/dropbear\[([0-9]+)\]/,a); print a[1]}' | \
                 while read p; do kill -0 "$p" 2>/dev/null && echo "$p"; done | wc -l)
         [[ $conns -lt 1 ]] && conns=1
-        hora=$(grep "dropbear\[${pid}\].*Password auth succeeded" /var/log/auth.log 2>/dev/null | awk '{print $3}')
+        hora=$(get_session_time_dropbear "$pid")
         printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
         (( total++ ))
     done < <(grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | \
