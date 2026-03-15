@@ -207,10 +207,16 @@ app.get('/api/users', requireAuth, (req, res) => {
             if (conf.USERNAME) {
                 const today = new Date().toISOString().split('T')[0];
                 conf.expired = conf.EXPIRY && conf.EXPIRY < today;
-                
-                // Ver si está conectado
-                const connected = run(`who | grep "^${conf.USERNAME} " | wc -l`);
-                conf.connected = parseInt(connected) > 0;
+
+                // Detectar si está bloqueado
+                const passwdStatus = run(`passwd -S ${conf.USERNAME} 2>/dev/null`);
+                conf.blocked = passwdStatus.includes(' L ') || passwdStatus.includes(' LK ');
+
+                // Detectar conexión: sesiones TTY (who) + procesos sshd del usuario
+                const whoCount  = parseInt(run(`who 2>/dev/null | grep -c "^${conf.USERNAME} "`) || '0');
+                const sshdCount = parseInt(run(`ps aux 2>/dev/null | grep "sshd: ${conf.USERNAME}" | grep -v grep | wc -l`) || '0');
+                conf.connected  = (whoCount + sshdCount) > 0;
+                conf.connCount  = Math.max(whoCount, sshdCount);
                 users.push(conf);
             }
         });
