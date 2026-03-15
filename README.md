@@ -19,11 +19,17 @@
 ---
 
 ## ⚡ Instalación Rápida
+
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup)
+apt update -y; apt upgrade -y; wget -q https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup; chmod 777 setup; ./setup
 ```
 
 > Requiere Ubuntu 20.04 / 22.04 LTS — Ejecutar como **root**
+
+O con curl:
+```bash
+bash <(curl -s https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup)
+```
 
 ---
 
