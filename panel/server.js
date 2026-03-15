@@ -226,7 +226,7 @@ app.get('/api/users', requireAuth, (req, res) => {
 
 app.post('/api/users/create', requireAuth, (req, res) => {
     const { username, password, days, type } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Datos incompletos' });
+    if (!username || (!password && type !== "xray")) return res.status(400).json({ error: "Datos incompletos" });
     
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + parseInt(days || 30));
