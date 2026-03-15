@@ -155,9 +155,28 @@ nav { flex: 1; padding: 10px 0; overflow-y: auto; }
 /* ─ TABLE ────────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; padding: 10px 14px; font-size: 12px; color: var(--text2); border-bottom: 1px solid var(--border); }
-td { padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: rgba(255,255,255,.02); }
+
+/* ─ ACCIONES RESPONSIVE ──────────────────────────────────── */
+.actions-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+.actions-wrap .btn { padding: 5px 9px; font-size: 11px; border-radius: 5px; }
+@media (max-width: 768px) {
+  .hide-mobile { display: none !important; }
+  th, td { padding: 8px 8px; font-size: 12px; }
+  .actions-wrap { flex-direction: column; gap: 3px; }
+  .actions-wrap .btn { width: 100%; justify-content: center; font-size: 11px; padding: 5px 6px; }
+  .stat-box { min-width: 60px; }
+  .stat-box .val { font-size: 22px; }
+}
+
+/* ─ MODAL DETALLES ───────────────────────────────────────── */
+.detail-row { display:flex; justify-content:space-between; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--border); gap:12px; }
+.detail-row:last-child { border-bottom: none; }
+.detail-lbl { color: var(--text2); font-size: 12px; min-width: 100px; padding-top:2px; }
+.detail-val { color: var(--text); font-size: 13px; text-align:right; word-break:break-all; flex:1; }
+.detail-link { background:var(--bg3); padding:8px 10px; border-radius:6px; font-size:10px; word-break:break-all; color:var(--cyan); margin-top:6px; line-height:1.5; }
 .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .badge-active   { background: rgba(63,185,80,.15); color: var(--green); }
 .badge-expired  { background: rgba(248,81,73,.15); color: var(--red); }
@@ -847,27 +866,30 @@ async function loadUsers() {
 
   document.getElementById('users-tbody').innerHTML = users.length ? users.map(u => `
     <tr>
-      <td><strong>${u.USERNAME}</strong></td>
-      <td><span class="badge ${u.TYPE==='xray'?'badge-xray':'badge-ssh'}">${u.TYPE||'ssh'}</span></td>
-      <td style="font-family:monospace;color:${u.expired?'var(--red)':'var(--text2)'}">${u.EXPIRY||'N/A'}</td>
+      <td><strong>${u.USERNAME}</strong>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">
+          <span class="badge ${u.TYPE==='xray'?'badge-xray':'badge-ssh'}" style="font-size:9px">${u.TYPE||'ssh'}</span>
+        </div>
+      </td>
+      <td class="hide-mobile" style="font-family:monospace;font-size:12px;color:${u.expired?'var(--red)':'var(--text2)'}">${u.EXPIRY||'N/A'}</td>
       <td><span class="badge ${u.expired?'badge-expired':(u.blocked?'badge-blocked':'badge-active')}">
-        ${u.expired?'Expirado':(u.blocked?'Bloqueado':'Activo')}</span></td>
+        ${u.expired?'Exp':(u.blocked?'Bloq':'Activo')}</span></td>
       <td style="text-align:center">
         ${u.connected
-          ? `<span class="status-dot status-on" title="${u.connCount||1} sesión(es) activa(s)"></span>
-             <small style="color:var(--green);margin-left:4px">${u.connCount||1}</small>`
+          ? `<span class="status-dot status-on"></span><small style="color:var(--green);margin-left:3px">${u.connCount||1}</small>`
           : `<span class="status-dot status-off"></span>`}
       </td>
       <td>
-        <button class="btn btn-info btn-sm" onclick="viewUser('${u.USERNAME}')">Ver</button>
-        <button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.USERNAME}')">
-          ${u.blocked?'Desbloquear':'Bloquear'}</button>
-        <button class="btn btn-warning btn-sm" onclick="renewUser('${u.USERNAME}')">Renovar</button>
-        <button class="btn btn-limit btn-sm" onclick="setLimit('${u.USERNAME}')">Límite</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.USERNAME}')">Eliminar</button>
+        <div class="actions-wrap">
+          <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
+          <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
+          <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}')">⚙ Límite</button>
+          <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓':'🔒'}</button>
+          <button class="btn btn-danger" onclick="deleteUser('${u.USERNAME}')">🗑</button>
+        </div>
       </td>
     </tr>
-  `).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
+  `).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
 }
 
 async function viewUser(username) {
@@ -909,10 +931,10 @@ async function viewUser(username) {
         <div class="detail-row"><span class="detail-lbl">Puerto</span><span class="detail-val">${d.port}</span></div>
         <div class="detail-row"><span class="detail-lbl">Expira</span><span class="detail-val" style="color:var(--yellow)">${d.data.EXPIRY||'-'}</span></div>
         <div class="detail-row"><span class="detail-lbl">Creado</span><span class="detail-val">${d.data.CREATED||'-'}</span></div>
-        <div class="detail-row" style="flex-direction:column;gap:6px">
+        <div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:6px">
           <span class="detail-lbl">Link VLESS</span>
-          <div style="background:var(--bg3);padding:8px;border-radius:6px;font-size:10px;word-break:break-all;color:var(--cyan)">${d.link}</div>
-          <button class="btn btn-info btn-sm" style="width:100%" onclick="navigator.clipboard.writeText('${d.link}');toast('Link copiado',true)">📋 Copiar Link VLESS</button>
+          <div class="detail-link">${d.link}</div>
+          <button class="btn btn-info" style="width:100%;margin-top:4px" onclick="navigator.clipboard.writeText('${d.link}');toast('Link copiado',true)">📋 Copiar Link VLESS</button>
         </div>
       </div>`;
   }
