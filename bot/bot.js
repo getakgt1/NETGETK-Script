@@ -272,7 +272,7 @@ async function createLicense(chatId, owner, days, type) {
         });
 
         // Comando de instalación para el usuario
-        const installCmd = `apt update -y && wget -q https://raw.githubusercontent.com/NETGETK/NETGETK-Script/main/setup && chmod +x setup && ./setup`;
+        const installCmd = `apt update -y && wget -q https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup && chmod +x setup && ./setup`;
 
         await send(chatId, `
 ✅ *Licencia generada exitosamente*
