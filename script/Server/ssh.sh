@@ -72,98 +72,41 @@ change_ssh_port() {
 
 install_ssh_ws() {
     echo ""
-    echo -e "${CYAN}[*] Instalando SSH WebSocket...${NC}"
-    echo -ne " ${WHITE}Puerto para WebSocket SSH (ej. 80): ${NC}"; read WS_PORT
+    echo -e "${CYAN}[*] Instalando Dropbear SSH...${NC}"
+    echo -ne " ${WHITE}Puerto para Dropbear (ej. 80): ${NC}"; read WS_PORT
     [[ -z "$WS_PORT" ]] && WS_PORT=80
-    
-    # Instalar python3-websockets si no está
-    python3 -c "import websockets" 2>/dev/null || apt install python3-websockets -y -q
-    
-    SSH_PORT=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
-    
-    # Crear script de WebSocket SSH
-    cat > /usr/local/bin/ssh-ws.py << PYEOF
-#!/usr/bin/env python3
-"""SSH WebSocket Proxy - GTKVPN"""
-import asyncio
-import websockets
-import socket
-import sys
 
-SSH_HOST = "127.0.0.1"
-SSH_PORT = ${SSH_PORT}
-WS_PORT  = ${WS_PORT}
+    # Instalar dropbear
+    apt install dropbear -y -q
 
-async def forward(ws, reader, writer):
-    async def ws_to_ssh():
-        try:
-            async for data in ws:
-                writer.write(data if isinstance(data, bytes) else data.encode())
-                await writer.drain()
-        except: pass
-        finally: writer.close()
+    # Configurar dropbear
+    cat > /etc/default/dropbear << DBEOF
+NO_START=0
+DROPBEAR_PORT=$WS_PORT
+DROPBEAR_EXTRA_ARGS="-w"
+DBEOF
 
-    async def ssh_to_ws():
-        try:
-            while True:
-                data = await reader.read(4096)
-                if not data: break
-                await ws.send(data)
-        except: pass
+    systemctl enable dropbear
+    systemctl restart dropbear
 
-    await asyncio.gather(ws_to_ssh(), ssh_to_ws())
-
-async def handler(ws, path):
-    # Responder handshake HTTP personalizado
-    reader, writer = await asyncio.open_connection(SSH_HOST, SSH_PORT)
-    await forward(ws, reader, writer)
-
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", WS_PORT,
-                                 subprotocols=["binary"],
-                                 ping_interval=None):
-        print(f"SSH WebSocket corriendo en :{WS_PORT} → SSH :{SSH_PORT}")
-        await asyncio.Future()
-
-asyncio.run(main())
-PYEOF
-    chmod +x /usr/local/bin/ssh-ws.py
-    
-    # Crear servicio systemd
-    cat > /etc/systemd/system/ssh-ws.service << SVC
-[Unit]
-Description=SSH WebSocket Proxy - GTKVPN
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/ssh-ws.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SVC
-    
-    systemctl daemon-reload
-    systemctl enable ssh-ws 2>/dev/null
-    systemctl restart ssh-ws
-    
     # Abrir puerto en UFW
     ufw allow "$WS_PORT/tcp" 2>/dev/null
-    
+
     # Guardar en config
+    sed -i "s/^SSH_WS_PORT=.*/SSH_WS_PORT=$WS_PORT/" $INSTALL_DIR/config.conf 2>/dev/null
     echo "SSH_WS_PORT=$WS_PORT" >> $INSTALL_DIR/config.conf
-    
-    if systemctl is-active --quiet ssh-ws; then
-        echo -e "${GREEN}[+] SSH WebSocket activo en puerto $WS_PORT${NC}"
+
+    if systemctl is-active --quiet dropbear; then
+        echo -e "${GREEN}[+] Dropbear SSH activo en puerto $WS_PORT${NC}"
+        echo -e "${YELLOW}[!] Conecta sin payload en HTTP Custom${NC}"
     else
-        echo -e "${RED}[!] Error iniciando SSH WebSocket${NC}"
+        echo -e "${RED}[!] Error iniciando Dropbear${NC}"
     fi
-    
+
     press_enter
     menu_ssh
 }
+
 
 status_ssh() {
     echo ""
