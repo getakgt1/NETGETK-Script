@@ -201,15 +201,85 @@ menu_update() {
     read OPT
     case $OPT in
         1)
-            echo -e "${CYAN}[*] Actualizando...${NC}"
-            wget -q -O /tmp/gtkvpn_update.sh \
-                "https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup" 2>/dev/null
-            if [[ -f /tmp/gtkvpn_update.sh ]]; then
-                bash /tmp/gtkvpn_update.sh update
-            else
-                echo -e "${RED}[!] No se pudo descargar la actualización${NC}"
-            fi
-            sleep 2; show_main ;;
+            clear
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${WHITE}           🔄 ACTUALIZANDO NETGETK SCRIPT                 ${NC}"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+
+            REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master"
+            INSTALL_DIR="/etc/gtkvpn"
+            UPDATE_OK=0
+            UPDATE_FAIL=0
+
+            echo -e "${CYAN}[*] Descargando actualizaciones desde GitHub...${NC}"
+            echo ""
+
+            # Lista de archivos a actualizar
+            declare -A FILES=(
+                ["script/manager"]="$INSTALL_DIR/manager"
+                ["script/banner.sh"]="$INSTALL_DIR/banner.sh"
+                ["script/back/usuarios.sh"]="$INSTALL_DIR/back/usuarios.sh"
+                ["script/back/contador.sh"]="$INSTALL_DIR/back/contador.sh"
+                ["script/back/optimizador.sh"]="$INSTALL_DIR/back/optimizador.sh"
+                ["script/back/firewall.sh"]="$INSTALL_DIR/back/firewall.sh"
+                ["script/back/speedtest.sh"]="$INSTALL_DIR/back/speedtest.sh"
+                ["script/Server/ssh.sh"]="$INSTALL_DIR/Server/ssh.sh"
+                ["script/Server/xray.sh"]="$INSTALL_DIR/Server/xray.sh"
+                ["script/Server/ssl.sh"]="$INSTALL_DIR/Server/ssl.sh"
+                ["script/Server/socks5.sh"]="$INSTALL_DIR/Server/socks5.sh"
+                ["script/Server/slowdns.sh"]="$INSTALL_DIR/Server/slowdns.sh"
+                ["script/Server/udp.sh"]="$INSTALL_DIR/Server/udp.sh"
+                ["panel/server.js"]="$INSTALL_DIR/panel/server.js"
+                ["panel/public/index.html"]="$INSTALL_DIR/panel/public/index.html"
+            )
+
+            for src in "${!FILES[@]}"; do
+                dest="${FILES[$src]}"
+                mkdir -p "$(dirname $dest)"
+                if wget -q --timeout=10 -O "${dest}.tmp" "$REPO/$src" 2>/dev/null; then
+                    # Verificar que el archivo descargado no está vacío
+                    if [[ -s "${dest}.tmp" ]]; then
+                        mv "${dest}.tmp" "$dest"
+                        chmod +x "$dest" 2>/dev/null
+                        fname=$(basename $dest)
+                        echo -e "  ${GREEN}✓${NC} $fname"
+                        ((UPDATE_OK++))
+                    else
+                        rm -f "${dest}.tmp"
+                        fname=$(basename $dest)
+                        echo -e "  ${RED}✗${NC} $fname (vacío)"
+                        ((UPDATE_FAIL++))
+                    fi
+                else
+                    rm -f "${dest}.tmp"
+                    fname=$(basename $dest)
+                    echo -e "  ${YELLOW}~${NC} $fname (sin cambios)"
+                    ((UPDATE_FAIL++))
+                fi
+            done
+
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e " ${GREEN}✓ Actualizados: $UPDATE_OK archivos${NC}"
+            [[ $UPDATE_FAIL -gt 0 ]] && echo -e " ${YELLOW}~ Sin cambios: $UPDATE_FAIL archivos${NC}"
+
+            # Reiniciar panel si se actualizó
+            echo ""
+            echo -e "${CYAN}[*] Reiniciando panel web...${NC}"
+            cd "$INSTALL_DIR/panel" && npm install --silent 2>/dev/null
+            pm2 restart netgetk-panel 2>/dev/null &&                 echo -e "  ${GREEN}✓ Panel reiniciado${NC}" ||                 echo -e "  ${YELLOW}~ Panel no activo${NC}"
+
+            # Actualizar enlace del manager
+            ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu 2>/dev/null
+            chmod +x /usr/local/bin/menu 2>/dev/null
+
+            echo ""
+            echo -e "${GREEN}[+] Actualización completada${NC}"
+            echo -e "${YELLOW}    Ejecuta 'menu' para ver los cambios${NC}"
+            echo ""
+            echo -ne "${WHITE}Presiona Enter para continuar...${NC}"; read
+            exec /usr/local/bin/menu ;;
         2)
             cat /etc/gtkvpn/changelog 2>/dev/null || echo -e "${YELLOW}Sin changelog disponible${NC}"
             sleep 3; menu_update ;;
