@@ -109,19 +109,33 @@ apt update -y -qq 2>/dev/null
 apt upgrade -y -qq 2>/dev/null
 
 echo -e "${CYAN}[2/5] Instalando dependencias...${NC}"
-apt install -y -qq curl wget git unzip net-tools lsof python3 python3-pip \
-    openssh-server nginx fail2ban ufw jq bc screen cron vnstat htop openssl \
-    uuid-runtime passwd login whois iptables netcat-openbsd 2>/dev/null
+apt install -y -qq \
+    curl wget git unzip net-tools lsof \
+    python3 python3-pip \
+    openssh-server nginx fail2ban ufw \
+    jq bc screen cron vnstat htop \
+    openssl uuid-runtime \
+    passwd login whois \
+    iptables netcat-openbsd \
+    dropbear stunnel4 \
+    badvpn privoxy \
+    build-essential cmake \
+    2>/dev/null || true
 
-# Node.js 18
-if ! command -v node &>/dev/null; then
-    echo -e "${CYAN}  → Instalando Node.js...${NC}"
+# Node.js 18+
+if ! command -v node &>/dev/null || [[ $(node -v 2>/dev/null | grep -oP '(?<=v)\d+') -lt 16 ]]; then
+    echo -e "${CYAN}  → Instalando Node.js 18...${NC}"
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash - 2>/dev/null
     apt install -y nodejs 2>/dev/null
 fi
+echo -e "  ${GREEN}✓ Node.js $(node -v)${NC}"
 
 # PM2
-command -v pm2 &>/dev/null || npm install -g pm2 -q 2>/dev/null
+if ! command -v pm2 &>/dev/null; then
+    echo -e "${CYAN}  → Instalando PM2...${NC}"
+    npm install -g pm2 -q 2>/dev/null
+fi
+echo -e "  ${GREEN}✓ PM2 $(pm2 -v 2>/dev/null)${NC}"
 
 # ── Instalar Xray ──────────────────────────────────────────────
 echo -e "${CYAN}[3/5] Instalando Xray...${NC}"
@@ -169,7 +183,17 @@ VPS_IP=$VPS_IP
 INSTALL_DATE=$(date +%Y-%m-%d)
 SCRIPT_VERSION=$VERSION
 SSH_PORT=22
+XRAY_PORT=32595
+XRAY_WS_PATH=/
+SOCKS_PORT=8080
+UDPGW_PORT=7300
+SSH_WS_PORT=2082
+PANEL_PORT=2095
 CONF
+# Crear directorios de compatibilidad
+mkdir -p "$INSTALL_DIR/users" "$INSTALL_DIR/back" "$INSTALL_DIR/Server"
+# Enlace de compatibilidad /etc/netgetk -> /etc/gtkvpn
+[[ ! -e /etc/netgetk ]] && ln -sf /etc/gtkvpn /etc/netgetk 2>/dev/null || true
 
 # Comando global menu
 ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu
@@ -178,9 +202,14 @@ ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu
 chmod +x /usr/local/bin/menu
 
 # SSH optimización básica
-sed -i 's/#MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config 2>/dev/null
-echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config 2>/dev/null
-systemctl restart ssh 2>/dev/null
+# Optimizar SSH para tunneling
+sed -i 's/#MaxAuthTries.*/MaxAuthTries 6/' /etc/ssh/sshd_config 2>/dev/null
+sed -i 's/#AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null
+sed -i 's/AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null
+grep -q "AllowTcpForwarding" /etc/ssh/sshd_config || echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
+grep -q "GatewayPorts" /etc/ssh/sshd_config || echo "GatewayPorts yes" >> /etc/ssh/sshd_config
+grep -q "UsePAM" /etc/ssh/sshd_config && sed -i 's/UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
+systemctl restart ssh 2>/dev/null || service ssh restart 2>/dev/null
 
 # UFW básico
 ufw --force reset 2>/dev/null
@@ -188,6 +217,10 @@ ufw default deny incoming 2>/dev/null
 ufw default allow outgoing 2>/dev/null
 ufw allow 22/tcp 2>/dev/null
 ufw allow 80/tcp 2>/dev/null
+ufw allow 443/tcp 2>/dev/null
+ufw allow 2095/tcp 2>/dev/null
+ufw allow 32595/tcp 2>/dev/null
+ufw allow 8080/tcp 2>/dev/null
 ufw --force enable 2>/dev/null
 
 # Instalar panel web
