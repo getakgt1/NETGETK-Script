@@ -1,113 +1,136 @@
-# ⚡ NETGETK VPN Script
+<div align="center">
+```
+  _   _ _____ _____ ____  _____ _____ _  __
+ | \ | | ____|_   _/ ___|| ____|_   _| |/ /
+ |  \| |  _|   | || |  _ |  _|   | | | ' /
+ | |\ | |___  | || |_| || |___  | | | . \
+ |_| \_|_____| |_| \____||_____| |_| |_|\_\
+```
 
-Panel de administración VPN profesional con sistema de licencias.
+# NETGETK VPN Script
 
-## 📦 Instalación en VPS
+**Panel de administración VPN completo para Ubuntu 20/22 LTS**
 
+[![GitHub](https://img.shields.io/badge/GitHub-getakgt1-blue?style=flat&logo=github)](https://github.com/getakgt1/NETGETK-Script)
+[![Telegram](https://img.shields.io/badge/Soporte-@NETGETK-blue?style=flat&logo=telegram)](https://t.me/NETGETK)
+
+</div>
+
+---
+
+## ⚡ Instalación Rápida
 ```bash
-apt update -y && wget -q https://raw.githubusercontent.com/NETGETK/NETGETK-Script/main/script/setup && chmod +x setup && ./setup
+bash <(curl -s https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script/setup)
 ```
 
-> El instalador solicitará una **LICENSE KEY** válida.
-> Contacta **@NETGETK** en Telegram para obtener tu licencia.
+> Requiere Ubuntu 20.04 / 22.04 LTS — Ejecutar como **root**
 
-## 🏗️ Estructura del Proyecto
+---
 
+## 📋 Requisitos
+
+| Requisito | Mínimo |
+|-----------|--------|
+| OS | Ubuntu 20.04 / 22.04 LTS |
+| RAM | 512 MB |
+| Disco | 5 GB |
+| Acceso | root |
+
+---
+
+## 🚀 Características
+
+- ✅ **Panel Web** en puerto 2095
+- ✅ **Gestión de usuarios SSH** con límite de conexiones
+- ✅ **Xray/VLESS** con WebSocket
+- ✅ **Contador en tiempo real** de usuarios conectados
+- ✅ **Renovar usuarios** desde terminal y panel web
+- ✅ **Ver detalles** de usuarios con link VLESS copiable
+- ✅ **SSH WebSocket**, SOCKS5, SlowDNS, UDP Custom
+- ✅ **Firewall UFW** integrado
+- ✅ **Bot de Telegram** para gestión remota
+
+---
+
+## 🖥️ Panel Web
+
+Después de instalar, accede al panel en:
 ```
-NETGETK/
-├── script/          ← Script que se instala en el VPS del cliente
-│   ├── setup        ← Instalador principal (valida licencia)
-│   ├── manager      ← Menú interactivo
-│   ├── Server/      ← Módulos de protocolos
-│   └── back/        ← Gestión de usuarios y sistema
-│
-├── license-server/  ← Servidor de licencias (despliega en Railway/Render)
-│   ├── server.js
-│   └── package.json
-│
-├── bot/             ← Bot de Telegram para gestión remota
-│   ├── bot.js
-│   └── package.json
-│
-└── panel/           ← Panel web (se instala en el VPS del cliente)
-    ├── server.js
+http://TU_IP:2095
+Usuario: admin
+Password: admin123
+```
+
+> ⚠️ Cambia la contraseña después del primer login en **Settings**
+
+---
+
+## 📟 Comandos
+```bash
+# Abrir menú principal
+menu
+
+# Ver usuarios conectados
+bash /etc/gtkvpn/back/contador.sh
+
+# Ver estado del panel
+pm2 status
+
+# Reiniciar panel
+pm2 restart netgetk-panel
+
+# Ver logs del panel
+pm2 logs netgetk-panel --lines 20
+```
+
+---
+
+## 📁 Estructura
+```
+/etc/gtkvpn/
+├── config.conf          # Configuración principal
+├── users/               # Archivos .info de usuarios
+├── back/
+│   ├── usuarios.sh      # Gestión de usuarios
+│   ├── contador.sh      # Contador de usuarios online
+│   ├── optimizador.sh   # Optimización del VPS
+│   └── firewall.sh      # Configuración UFW
+├── Server/
+│   ├── ssh.sh           # Módulo SSH
+│   ├── xray.sh          # Módulo Xray/VLESS
+│   ├── ssl.sh           # SSL/TLS
+│   ├── socks5.sh        # SOCKS5
+│   ├── slowdns.sh       # SlowDNS
+│   └── udp.sh           # UDP Custom
+└── panel/
+    ├── server.js        # Backend Node.js
     └── public/
+        └── index.html   # Panel Web
 ```
 
-## 🚀 Despliegue del Sistema
+---
 
-### 1. Servidor de Licencias (Railway.app - GRATIS)
+## 🔧 Puertos por defecto
 
-```bash
-# Ir a https://railway.app
-# New Project → Deploy from GitHub
-# Selecciona la carpeta license-server/
-# Variables de entorno:
-#   ADMIN_TOKEN = tu_token_secreto_aqui
-#   PORT = 3000
-```
+| Servicio | Puerto |
+|----------|--------|
+| SSH | 22 |
+| Panel Web | 2095 |
+| Xray/VLESS | 32595 |
+| SOCKS5 | 8080 |
+| UDP Custom | 1194 |
+| BadVPN UDPGW | 7300 |
+| SSH WebSocket | 2082 |
 
-### 2. Bot de Telegram
+---
 
-```bash
-# Obtener BOT_TOKEN: habla con @BotFather en Telegram
-# Obtener tu TELEGRAM_ID: habla con @userinfobot
+## 📞 Soporte
 
-cd bot/
-npm install
-BOT_TOKEN=xxx ADMIN_IDS=123456789 LICENSE_SERVER=https://tu-app.railway.app node bot.js
-```
+- **Telegram:** [@NETGETK](https://t.me/NETGETK)
+- **GitHub Issues:** [Reportar problema](https://github.com/getakgt1/NETGETK-Script/issues)
 
-### 3. Script en GitHub
+---
 
-Sube todo a tu repositorio GitHub público y el setup descargará los archivos automáticamente.
-
-## 🤖 Comandos del Bot
-
-| Comando | Descripción |
-|---------|-------------|
-| `/genkey` | Generar nueva licencia (conversación guiada) |
-| `/listkeys` | Ver todas las licencias |
-| `/keyinfo KEY` | Info detallada de una key |
-| `/revoke KEY` | Revocar licencia |
-| `/activate KEY` | Reactivar licencia |
-| `/renew KEY días` | Extender validez |
-| `/transfer KEY nueva_ip` | Cambiar IP vinculada |
-| `/stats` | Estadísticas del sistema |
-| `/log` | Ver logs de actividad |
-
-## ⚙️ Variables de Entorno
-
-### license-server
-```
-ADMIN_TOKEN = token_secreto_para_el_bot
-PORT        = 3000
-```
-
-### bot
-```
-BOT_TOKEN       = token_de_@BotFather
-ADMIN_IDS       = tu_id_telegram (separados por coma si hay varios)
-LICENSE_SERVER  = https://tu-servidor.railway.app
-ADMIN_TOKEN     = mismo_token_del_servidor
-```
-
-## 🔒 Sistema de Licencias
-
-- Cada KEY se genera con un nombre de usuario y días de validez
-- Al instalar el script, la KEY queda **vinculada a la IP del VPS**
-- Si el cliente cambia de VPS, usa `/transfer KEY nueva_ip` en el bot
-- El script hace **ping diario** al servidor para verificar validez
-- Si la licencia se revoca, el cliente pierde acceso en 24h
-
-## 📋 Protocolos incluidos
-
-- ✅ OpenSSH + WebSocket
-- ✅ Xray (VLESS + VMess + WebSocket)
-- ✅ SOCKS5 Python
-- ✅ SlowDNS
-- ✅ UDP Custom + BadVPN-UDPgw
-- ✅ Nginx + SSL/TLS
-- ✅ Panel Web (puerto 2095)
-
-## By: NETGETK | Telegram: @NETGETK
+<div align="center">
+Made with ❤️ by GETAK
+</div>
