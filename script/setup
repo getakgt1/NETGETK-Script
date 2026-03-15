@@ -105,8 +105,12 @@ sleep 2
 
 # ── Instalar dependencias ──────────────────────────────────────
 echo -e "${CYAN}[1/5] Actualizando sistema...${NC}"
-apt update -y -qq 2>/dev/null
-apt upgrade -y -qq 2>/dev/null
+apt-get update -y 2>/dev/null
+apt-get upgrade -y 2>/dev/null
+apt-get dist-upgrade -y 2>/dev/null
+apt-get autoremove -y 2>/dev/null
+apt-get autoclean -y 2>/dev/null
+echo -e "  ${GREEN}✓ Sistema actualizado${NC}"
 
 echo -e "${CYAN}[2/5] Instalando dependencias...${NC}"
 apt install -y -qq \
