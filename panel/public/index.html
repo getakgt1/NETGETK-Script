@@ -166,6 +166,12 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .btn-warning:hover { background: rgba(255,193,7,.3); }
 .btn-info       { background: rgba(88,166,255,.15); color: #58a6ff; border: 1px solid rgba(88,166,255,.3); }
 .btn-info:hover { background: rgba(88,166,255,.3); }
+.btn-limit      { background: rgba(139,233,253,.15); color: #8be9fd; border: 1px solid rgba(139,233,253,.3); }
+.btn-limit:hover{ background: rgba(139,233,253,.3); }
+.detail-row     { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }
+.detail-row:last-child { border-bottom: none; }
+.detail-lbl     { color: var(--text2); font-size: 13px; min-width: 120px; }
+.detail-val     { color: var(--text1); font-size: 13px; text-align:right; }
 .badge-blocked  { background: rgba(210,153,34,.15); color: var(--yellow); }
 .badge-xray     { background: rgba(88,166,255,.15); color: var(--blue); }
 .badge-ssh      { background: rgba(188,140,255,.15); color: var(--purple); }
@@ -853,14 +859,71 @@ async function loadUsers() {
           : `<span class="status-dot status-off"></span>`}
       </td>
       <td>
+        <button class="btn btn-info btn-sm" onclick="viewUser('${u.USERNAME}')">Ver</button>
         <button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.USERNAME}')">
           ${u.blocked?'Desbloquear':'Bloquear'}</button>
         <button class="btn btn-warning btn-sm" onclick="renewUser('${u.USERNAME}')">Renovar</button>
-        <button class="btn btn-info btn-sm" onclick="setLimit('${u.USERNAME}')">Límite</button>
+        <button class="btn btn-limit btn-sm" onclick="setLimit('${u.USERNAME}')">Límite</button>
         <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.USERNAME}')">Eliminar</button>
       </td>
     </tr>
   `).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
+}
+
+async function viewUser(username) {
+  const r = await fetch(`${API}/api/users/${username}/details`);
+  const d = await r.json();
+  if (!d.type) { toast('✗ Error cargando datos', false); return; }
+
+  document.getElementById('detail-title').textContent = `👤 ${username}`;
+  let html = '';
+
+  if (d.type === 'ssh') {
+    html = `
+      <div style="display:grid;gap:10px">
+        <div class="detail-row"><span class="detail-lbl">Usuario</span><span class="detail-val">${d.data.USERNAME||'-'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Contraseña</span>
+          <span class="detail-val" style="display:flex;align-items:center;gap:8px">
+            <span id="pw-val" style="filter:blur(4px)">${d.data.PASSWORD||'-'}</span>
+            <button class="btn btn-sm btn-secondary" onclick="togglePw()">👁</button>
+            <button class="btn btn-sm btn-info" onclick="navigator.clipboard.writeText('${d.data.PASSWORD||''}');toast('Copiado',true)">📋</button>
+          </span>
+        </div>
+        <div class="detail-row"><span class="detail-lbl">Tipo</span><span class="detail-val"><span class="badge badge-ssh">SSH</span></span></div>
+        <div class="detail-row"><span class="detail-lbl">Expira</span><span class="detail-val" style="color:var(--yellow)">${d.data.EXPIRY||'-'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Creado</span><span class="detail-val">${d.data.CREATED||'-'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Límite conex.</span><span class="detail-val">${d.data.LIMIT||'100'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">IP Servidor</span><span class="detail-val">${d.ip}</span></div>
+      </div>`;
+  } else {
+    html = `
+      <div style="display:grid;gap:10px">
+        <div class="detail-row"><span class="detail-lbl">Usuario</span><span class="detail-val">${d.data.USERNAME||'-'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Tipo</span><span class="detail-val"><span class="badge badge-xray">XRAY</span></span></div>
+        <div class="detail-row"><span class="detail-lbl">UUID</span>
+          <span class="detail-val" style="display:flex;align-items:center;gap:8px;font-size:11px;word-break:break-all">
+            ${d.data.UUID||'-'}
+            <button class="btn btn-sm btn-info" onclick="navigator.clipboard.writeText('${d.data.UUID||''}');toast('UUID copiado',true)">📋</button>
+          </span>
+        </div>
+        <div class="detail-row"><span class="detail-lbl">Puerto</span><span class="detail-val">${d.port}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Expira</span><span class="detail-val" style="color:var(--yellow)">${d.data.EXPIRY||'-'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Creado</span><span class="detail-val">${d.data.CREATED||'-'}</span></div>
+        <div class="detail-row" style="flex-direction:column;gap:6px">
+          <span class="detail-lbl">Link VLESS</span>
+          <div style="background:var(--bg3);padding:8px;border-radius:6px;font-size:10px;word-break:break-all;color:var(--cyan)">${d.link}</div>
+          <button class="btn btn-info btn-sm" style="width:100%" onclick="navigator.clipboard.writeText('${d.link}');toast('Link copiado',true)">📋 Copiar Link VLESS</button>
+        </div>
+      </div>`;
+  }
+
+  document.getElementById('detail-body').innerHTML = html;
+  document.getElementById('modal-user-details').classList.add('open');
+}
+
+function togglePw() {
+  const el = document.getElementById('pw-val');
+  el.style.filter = el.style.filter === 'none' ? 'blur(4px)' : 'none';
 }
 
 async function renewUser(username) {
@@ -1118,5 +1181,16 @@ fetch(`${API}/api/overview`).then(r => {
   }
 }).catch(() => {});
 </script>
+
+<!-- Modal detalles usuario -->
+<div id="modal-user-details" class="modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-header">
+      <span id="detail-title">Detalles de Usuario</span>
+      <button class="modal-close" onclick="document.getElementById('modal-user-details').classList.remove('open')">✕</button>
+    </div>
+    <div id="detail-body" style="padding:16px"></div>
+  </div>
+</div>
 </body>
 </html>

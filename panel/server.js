@@ -392,6 +392,43 @@ app.post('/api/settings/password', requireAuth, (req, res) => {
     res.json({ ok: true });
 });
 
+
+// ── VER DETALLES DE USUARIO ──────────────────────────────────
+app.get('/api/users/:username/details', requireAuth, (req, res) => {
+    const { username } = req.params;
+    try {
+        const conf = readConf();
+        const ip = run('curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk "{print $1}"');
+
+        // Buscar info SSH
+        const infoSsh = path.join(USERS_DIR, `${username}.info`);
+        if (fs.existsSync(infoSsh)) {
+            const u = {};
+            fs.readFileSync(infoSsh, 'utf8').split('\n').forEach(line => {
+                const [k, ...v] = line.split('=');
+                if (k) u[k.trim()] = v.join('=').trim();
+            });
+            return res.json({ type: 'ssh', data: u, ip });
+        }
+
+        // Buscar info Xray
+        const infoXray = path.join(USERS_DIR, `${username}_xray.info`);
+        if (fs.existsSync(infoXray)) {
+            const u = {};
+            fs.readFileSync(infoXray, 'utf8').split('\n').forEach(line => {
+                const [k, ...v] = line.split('=');
+                if (k) u[k.trim()] = v.join('=').trim();
+            });
+            const port = conf.XRAY_PORT || '32595';
+            const wsPath = encodeURIComponent(conf.XRAY_WS_PATH || '/');
+            const link = `vless://${u.UUID}@${ip}:${port}?type=ws&encryption=none&path=${wsPath}&security=none#${username}-GTKVPN`;
+            return res.json({ type: 'xray', data: u, ip, link, port });
+        }
+
+        res.status(404).json({ error: 'Usuario no encontrado' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── INICIO ────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`GTKVPN Panel corriendo en http://0.0.0.0:${PORT}`);
