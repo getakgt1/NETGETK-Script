@@ -36,8 +36,9 @@ if [[ "$ID" != "ubuntu" ]]; then
 fi
 
 # ── Obtener IP del VPS ─────────────────────────────────────────
-VPS_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || \
-         curl -s --max-time 5 ip.sb 2>/dev/null || \
+VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+         curl -4 -s --max-time 5 ip.sb 2>/dev/null || \
+         curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
          hostname -I | awk '{print $1}')
 
 echo -e " ${WHITE}IP detectada:${NC} ${CYAN}$VPS_IP${NC}"
