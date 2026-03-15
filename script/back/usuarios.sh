@@ -87,28 +87,36 @@ delete_ssh() {
 # ─── VER USUARIOS ACTIVOS ─────────────────────────────────────
 active_users() {
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║            USUARIOS CONECTADOS               ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║                   USUARIOS CONECTADOS                        ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    
-    # SSH activos
-    SSH_ACTIVE=$(who | awk '{print $1}' | sort -u)
-    if [[ -z "$SSH_ACTIVE" ]]; then
-        echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
-    else
-        echo -e " ${WHITE}USUARIO SSH          DESDE              HORA${NC}"
-        echo -e "${CYAN} ─────────────────────────────────────────────${NC}"
-        while IFS= read -r user; do
-            INFO=$(who | grep "^$user" | head -1)
-            HORA=$(echo "$INFO" | awk '{print $3, $4}')
-            IP=$(echo "$INFO" | grep -oP '\(\K[^\)]+' | head -1)
-            printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "${IP:-local}" "$HORA"
-        done <<< "$SSH_ACTIVE"
-    fi
-    
+    echo -e " ${WHITE}USUARIO SSH          CONEXIONES         HORA LOGIN${NC}"
+    echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
+
+    local total=0
+    declare -A SEEN
+
+    while IFS= read -r user; do
+        [[ -z "$user" || "$user" == "root" || "$user" == "sshd" || "$user" == "nobody" ]] && continue
+        [[ -n "${SEEN[$user]}" ]] && continue
+        SEEN[$user]=1
+
+        local conns hora
+        conns=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | wc -l)
+        [[ $conns -lt 1 ]] && conns=1
+        hora=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}' | grep -E '^[0-9]{2}:[0-9]{2}' || ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}')
+
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
+        (( total++ ))
+    done < <(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}' | sort -u)
+
+    [[ $total -eq 0 ]] && echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
+
     echo ""
-    echo -e " ${WHITE}Total SSH activos: ${GREEN}$(who | wc -l)${NC}"
+    local total_conn
+    total_conn=$(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}' | grep -Ev "^(root|sshd|nobody)$" | wc -l)
+    echo -e " ${WHITE}Total SSH activos: ${GREEN}${total_conn}${NC}"
     press_enter
 }
 
