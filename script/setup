@@ -76,7 +76,7 @@ VALIDATE_RESP=$(curl -s --max-time 10 \
     -H "Content-Type: application/json" \
     -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}" 2>/dev/null)
 
-STATUS=$(echo "$VALIDATE_RESP" | grep -o 'status":"[^"]*' | cut -d'"' -f4)
+STATUS=$(echo "$VALIDATE_RESP" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 MSG=$(echo "$VALIDATE_RESP" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
 OWNER=$(echo "$VALIDATE_RESP" | grep -o '"owner":"[^"]*"' | cut -d'"' -f4)
 EXPIRY=$(echo "$VALIDATE_RESP" | grep -o '"expiry":"[^"]*"' | cut -d'"' -f4)
