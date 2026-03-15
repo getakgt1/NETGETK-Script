@@ -22,7 +22,7 @@ get_session_time() {
     elif [[ "$etime" =~ ^([0-9]+):([0-9]+)$ ]]; then
         mins=${BASH_REMATCH[1]}; secs=${BASH_REMATCH[2]}
     fi
-    printf "%02d:%02d:%02d" "$(( days*24 + hours ))" "$mins" "$secs"
+    printf "%02d:%02d:%02d" "$(( days*24 + hours ))" "$(( 10#$mins ))" "$(( 10#$secs ))"
 }
 
 get_user_limit() {
