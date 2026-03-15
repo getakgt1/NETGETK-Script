@@ -37,7 +37,7 @@ create_ssh() {
     EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
     
     # Crear usuario sin home, con shell restringida
-    useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME" 2>/dev/null
+    useradd -e "$EXPIRY" -s /bin/bash -M "$USERNAME" 2>/dev/null
     printf '%s:%s\n' "$USERNAME" "$PASSWORD" | chpasswd
     
     # Guardar info del usuario
