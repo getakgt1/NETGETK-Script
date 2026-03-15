@@ -47,18 +47,22 @@ install_udp() {
     echo -e "${CYAN}[1/4] Instalando dependencias...${NC}"
     apt install git curl -y -q
 
-    echo -e "${CYAN}[2/4] Clonando repo oficial udp-custom...${NC}"
+    echo -e "${CYAN}[2/4] Clonando e instalando udp-custom oficial...${NC}"
     rm -rf /tmp/udp-custom-install
     git clone https://github.com/http-custom/udp-custom /tmp/udp-custom-install
     cd /tmp/udp-custom-install
+    chmod +x install.sh
+
+    # Instalar de forma no interactiva pasando el puerto
+    echo -e "$UDP_PORT\n" | ./install.sh
 
     echo -e "${CYAN}[3/4] Instalando binario...${NC}"
     mkdir -p $UDP_DIR
     ARCH=$(uname -m)
     if [[ "$ARCH" == "x86_64" ]]; then
-        curl -sL "https://github.com/http-custom/udp-custom/releases/latest/download/server-amd64" -o $UDP_DIR/udp-custom
+        cp /tmp/udp-custom-install/bin/udp-custom-linux-amd64 $UDP_DIR/udp-custom
     elif [[ "$ARCH" == "aarch64" ]]; then
-        curl -sL "https://github.com/http-custom/udp-custom/releases/latest/download/server-arm64" -o $UDP_DIR/udp-custom
+        cp /tmp/udp-custom-install/bin/udp-custom-linux-arm64 $UDP_DIR/udp-custom 2>/dev/null ||         cp /tmp/udp-custom-install/bin/udp-custom-linux-amd64 $UDP_DIR/udp-custom
     fi
     chmod +x $UDP_DIR/udp-custom
 
