@@ -74,8 +74,7 @@ show_online() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     local total_sesiones
-    total_sesiones=$(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv \
-        | grep -v "sshd -D" | awk '{print $1}' | grep -Ev "^(root|sshd|nobody)$" | wc -l)
+    total_sesiones=$total_users
     echo -e "\n ${YELLOW}🦋${NC} # TIENES  ${WHITE}[${NC} ${GREEN}${total_sesiones}${NC} ${WHITE}]${NC} USUARIOS CONECTADOS ${YELLOW}🦋${NC} #"
     echo ""; press_enter
 }
