@@ -47,14 +47,9 @@ install_udp() {
     echo -e "${CYAN}[1/4] Instalando dependencias...${NC}"
     apt install git curl -y -q
 
-    echo -e "${CYAN}[2/4] Clonando e instalando udp-custom oficial...${NC}"
+    echo -e "${CYAN}[2/4] Descargando udp-custom...${NC}"
     rm -rf /tmp/udp-custom-install
     git clone https://github.com/http-custom/udp-custom /tmp/udp-custom-install
-    cd /tmp/udp-custom-install
-    chmod +x install.sh
-
-    # Instalar de forma no interactiva pasando el puerto
-    echo -e "$UDP_PORT\n" | ./install.sh
 
     echo -e "${CYAN}[3/4] Instalando binario...${NC}"
     mkdir -p $UDP_DIR
