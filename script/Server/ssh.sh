@@ -91,8 +91,8 @@ import socket
 import sys
 
 SSH_HOST = "127.0.0.1"
-SSH_PORT = $SSH_PORT
-WS_PORT  = $WS_PORT
+SSH_PORT = ${SSH_PORT}
+WS_PORT  = ${WS_PORT}
 
 async def forward(ws, reader, writer):
     async def ws_to_ssh():
