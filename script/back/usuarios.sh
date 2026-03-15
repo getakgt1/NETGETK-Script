@@ -317,38 +317,40 @@ renew_user() {
     if [[ -d "$USERS_DIR" ]]; then
         for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
-            source "$f"
+            UNAME=$(grep "^USERNAME=" "$f" | cut -d= -f2)
+            UEXPIRY=$(grep "^EXPIRY=" "$f" | cut -d= -f2)
             TODAY=$(date +%Y-%m-%d)
-            if [[ "$EXPIRY" < "$TODAY" ]]; then
-                STATUS="${RED}EXPIRADO${NC}"
+            if [[ "$UEXPIRY" < "$TODAY" ]]; then
+                USTATUS="${RED}EXPIRADO${NC}"
             else
-                STATUS="${GREEN}ACTIVO${NC}"
+                USTATUS="${GREEN}ACTIVO${NC}"
             fi
-            printf " ${CYAN}%-18s${NC} ${YELLOW}expira: %-12s${NC} %b\n" "$USERNAME" "$EXPIRY" "$STATUS"
+            printf " ${CYAN}%-18s${NC} ${YELLOW}expira: %-12s${NC} %b\n" "$UNAME" "$UEXPIRY" "$USTATUS"
         done
     else
         echo -e " ${YELLOW}Sin usuarios registrados${NC}"
     fi
     echo ""
-    echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read USERNAME
-    echo -ne " ${WHITE}Nuevos días : ${NC}"; read DIAS
-    [[ -z "$DIAS" ]] && DIAS=30
-    
-    NEW_EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
-    
+    echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read -r RENEW_USER
+    echo -ne " ${WHITE}Nuevos días : ${NC}"; read -r RENEW_DIAS
+    [[ -z "$RENEW_USER" ]] && { echo -e "${RED}[!] Nombre vacío${NC}"; press_enter; return; }
+    [[ -z "$RENEW_DIAS" ]] && RENEW_DIAS=30
+
+    NEW_EXPIRY=$(date -d "+${RENEW_DIAS} days" +%Y-%m-%d)
+
     # Renovar SSH
-    if id "$USERNAME" &>/dev/null; then
-        chage -E "$NEW_EXPIRY" "$USERNAME" 2>/dev/null
-        usermod -e "$NEW_EXPIRY" "$USERNAME" 2>/dev/null
+    if id "$RENEW_USER" &>/dev/null; then
+        chage -E "$NEW_EXPIRY" "$RENEW_USER" 2>/dev/null
+        usermod -e "$NEW_EXPIRY" "$RENEW_USER" 2>/dev/null
     fi
-    
+
     # Actualizar archivo info
-    INFO_FILE="$USERS_DIR/${USERNAME}.info"
+    INFO_FILE="$USERS_DIR/${RENEW_USER}.info"
     [[ -f "$INFO_FILE" ]] && sed -i "s/EXPIRY=.*/EXPIRY=$NEW_EXPIRY/" "$INFO_FILE"
-    INFO_FILE="$USERS_DIR/${USERNAME}_xray.info"
+    INFO_FILE="$USERS_DIR/${RENEW_USER}_xray.info"
     [[ -f "$INFO_FILE" ]] && sed -i "s/EXPIRY=.*/EXPIRY=$NEW_EXPIRY/" "$INFO_FILE"
-    
-    echo -e "${GREEN}[+] Usuario ${USERNAME} renovado hasta ${NEW_EXPIRY}${NC}"
+
+    echo -e "${GREEN}[+] Usuario ${RENEW_USER} renovado hasta ${NEW_EXPIRY}${NC}"
     press_enter
 }
 
