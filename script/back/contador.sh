@@ -49,6 +49,11 @@ show_online() {
 
         local conns limit tiempo
         conns=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | wc -l)
+        # Detectar conexiones Dropbear via auth.log
+        local ll le
+        ll=$(grep "succeeded for '${user}'" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
+        le=$(grep "Exit (${user})" /var/log/auth.log 2>/dev/null | tail -1 | awk '{print $1,$2,$3,$4}')
+        [[ -n "$ll" && "$ll" > "$le" ]] && (( conns++ ))
         [[ $conns -lt 1 ]] && conns=1
         limit=$(get_user_limit "$user")
         tiempo=$(get_session_time "$user")
@@ -63,8 +68,7 @@ show_online() {
         printf " ${CYAN}[%d]${NC}${YELLOW}-%-17s${NC}  ${conn_color}[%d/%s]${NC}      ${WHITE}%s${NC}\n" \
             "$total_users" "$user" "$conns" "$limit" "$tiempo"
 
-    done < <(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv \
-        | grep -v "sshd -D" | awk '{print $1}' | sort -u)
+    done < <({ ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}'; grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | awk -F"'" '{print $2}'; } | sort -u)
 
     [[ $total_users -eq 0 ]] && echo -e "  ${YELLOW}Sin usuarios conectados${NC}"
     echo ""
