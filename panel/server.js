@@ -159,8 +159,10 @@ app.get('/api/overview', requireAuth, (req, res) => {
             sshws:    { active: svcStatus('ssh-ws'),         port: conf.SSH_WS_PORT || 'N/A' },
         };
 
-        // Usuarios SSH activos
-        const sshActive = parseInt(run('who | wc -l') || '0');
+        // Usuarios SSH activos reales (who + procesos sshd autenticados)
+        const _sshWho   = parseInt(run('who 2>/dev/null | wc -l') || '0');
+        const _sshProcs = parseInt(run('ps aux 2>/dev/null | grep "sshd:" | grep -v "grep\|sshd -D\|sshd -R" | wc -l') || '0');
+        const sshActive = Math.max(_sshWho, _sshProcs);
 
         res.json({
             cpu, cores, ram: { total: ramTotal, used: ramUsed },
@@ -215,9 +217,9 @@ app.get('/api/users', requireAuth, (req, res) => {
                 // Detectar conexión: sesiones TTY (who) + procesos sshd del usuario
                 const whoCount  = parseInt(run(`who 2>/dev/null | grep -c "^${conf.USERNAME} "`) || '0');
                 const sshdCount = parseInt(run(`ps aux 2>/dev/null | grep "sshd: ${conf.USERNAME}" | grep -v grep | wc -l`) || '0');
-                const dropbearCount = parseInt(run(`ll=$(grep "succeeded for '${conf.USERNAME}'" /var/log/auth.log | tail -1 | awk '{print $1,$2,$3,$4}'); le=$(grep "Exit (${conf.USERNAME})" /var/log/auth.log | tail -1 | awk '{print $1,$2,$3,$4}'); [[ "$ll" > "$le" ]] && echo 1 || echo 0`) || "0");
-                conf.connected  = (whoCount + sshdCount + dropbearCount) > 0;
-                conf.connCount  = Math.max(whoCount, sshdCount, dropbearCount);
+                conf.connected  = (whoCount + sshdCount) > 0;
+                conf.connCount  = whoCount + sshdCount;
+                conf.limitVal   = conf.LIMIT ? parseInt(conf.LIMIT) : 0;
                 users.push(conf);
             }
         });
@@ -427,6 +429,88 @@ app.get('/api/users/:username/details', requireAuth, (req, res) => {
         }
 
         res.status(404).json({ error: 'Usuario no encontrado' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── RENOVAR USUARIO ──────────────────────────────────────────
+app.post('/api/users/:username/renew', requireAuth, (req, res) => {
+    const { username } = req.params;
+    const { days } = req.body;
+    const d = parseInt(days);
+    if (!d || d <= 0) return res.status(400).json({ error: 'Dias invalidos' });
+    try {
+        const infoFile = path.join(USERS_DIR, username + '.info');
+        if (!fs.existsSync(infoFile))
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+
+        // Leer datos actuales
+        const uconf = {};
+        fs.readFileSync(infoFile, 'utf8').split('\n').forEach(line => {
+            const idx = line.indexOf('=');
+            if (idx > 0) uconf[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        });
+
+        // Calcular nueva fecha desde hoy o desde expiración vigente
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        let base = new Date(today);
+        if (uconf.EXPIRY) {
+            const cur = new Date(uconf.EXPIRY); cur.setHours(0, 0, 0, 0);
+            if (cur > today) base = cur;
+        }
+        base.setDate(base.getDate() + d);
+        const yyyy = base.getFullYear();
+        const mm   = String(base.getMonth() + 1).padStart(2, '0');
+        const dd   = String(base.getDate()).padStart(2, '0');
+        const newExpiry = yyyy + '-' + mm + '-' + dd;
+
+        // Actualizar expiración en el sistema operativo
+        const chageOut  = run('chage -E ' + newExpiry + ' ' + username + ' 2>&1');
+        const usermodOut = run('usermod -e ' + newExpiry + ' ' + username + ' 2>&1');
+
+        // Actualizar archivo .info
+        uconf.EXPIRY = newExpiry;
+        const newContent = Object.entries(uconf)
+            .filter(([k]) => k)
+            .map(([k, v]) => k + '=' + v)
+            .join('\n') + '\n';
+        fs.writeFileSync(infoFile, newContent);
+
+        res.json({ ok: true, expiry: newExpiry });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── LIMITE DE CONEXIONES ──────────────────────────────────────
+app.post('/api/users/:username/limit', requireAuth, (req, res) => {
+    const { username } = req.params;
+    const { limit } = req.body;
+    const lv = parseInt(limit);
+    if (isNaN(lv) || lv < 0) return res.status(400).json({ error: 'Limite invalido' });
+    try {
+        const infoFile = path.join(USERS_DIR, username + '.info');
+        if (!fs.existsSync(infoFile))
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+
+        // Leer y actualizar archivo .info
+        const uconf = {};
+        fs.readFileSync(infoFile, 'utf8').split('\n').forEach(line => {
+            const idx = line.indexOf('=');
+            if (idx > 0) uconf[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        });
+        uconf.LIMIT = lv;
+        const newContent = Object.entries(uconf)
+            .filter(([k]) => k)
+            .map(([k, v]) => k + '=' + v)
+            .join('\n') + '\n';
+        fs.writeFileSync(infoFile, newContent);
+
+        // Aplicar limite via PAM
+        const limitsFile = '/etc/security/limits.d/gtkvpn.conf';
+        let lc = fs.existsSync(limitsFile) ? fs.readFileSync(limitsFile, 'utf8') : '';
+        lc = lc.split('\n').filter(l => l && !l.startsWith(username + ' ')).join('\n');
+        if (lv > 0) lc += '\n' + username + ' hard maxlogins ' + lv + '\n';
+        fs.writeFileSync(limitsFile, lc);
+
+        res.json({ ok: true, limit: lv });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
