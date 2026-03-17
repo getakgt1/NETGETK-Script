@@ -454,8 +454,8 @@ textarea { resize: vertical; font-family: monospace; font-size: 12px; }
       <table class="users-table">
         <thead>
           <tr>
-            <th>Usuario</th><th>Tipo</th><th>Expira</th>
-            <th>Estado</th><th>Conectado</th><th>Acciones</th>
+            <th>Usuario</th><th class="hide-mobile">Tipo</th><th class="hide-mobile">Expira</th>
+            <th>Estado</th><th>Conectado</th><th class="hide-mobile">Límite</th><th>Acciones</th>
           </tr>
         </thead>
         <tbody id="users-tbody"></tbody>
@@ -953,7 +953,9 @@ async function loadUsers() {
       <div class="user-card-actions">
         <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
         <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
-        <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}')">⚙ Límite</button>
+        <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}', ${u.limitVal||0})">
+          ⚙ Límite${u.limitVal > 0 ? ` (${u.limitVal})` : ''}
+        </button>
         <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓 Desbloquear':'🔒 Bloquear'}</button>
         <button class="btn btn-danger" style="grid-column:span 2" onclick="deleteUser('${u.USERNAME}')">🗑 Eliminar</button>
       </div>
@@ -975,17 +977,20 @@ async function loadUsers() {
           ? `<span class="status-dot status-on"></span><small style="color:var(--green);margin-left:3px">${u.connCount||1}</small>`
           : `<span class="status-dot status-off"></span>`}
       </td>
+      <td class="hide-mobile" style="text-align:center;min-width:60px">
+        ${u.limitVal > 0 ? u.limitVal : '∞'}
+      </td>
       <td>
         <div class="actions-wrap">
           <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
           <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
-          <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}')">⚙ Límite</button>
+          <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}', ${u.limitVal||0})">⚙ Límite</button>
           <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓':'🔒'}</button>
           <button class="btn btn-danger" onclick="deleteUser('${u.USERNAME}')">🗑</button>
         </div>
       </td>
     </tr>
-  `).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
+  `).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px">Sin usuarios registrados</td></tr>';
 }
 
 async function viewUser(username) {
@@ -1010,7 +1015,7 @@ async function viewUser(username) {
         <div class="detail-row"><span class="detail-lbl">Tipo</span><span class="detail-val"><span class="badge badge-ssh">SSH</span></span></div>
         <div class="detail-row"><span class="detail-lbl">Expira</span><span class="detail-val" style="color:var(--yellow)">${d.data.EXPIRY||'-'}</span></div>
         <div class="detail-row"><span class="detail-lbl">Creado</span><span class="detail-val">${d.data.CREATED||'-'}</span></div>
-        <div class="detail-row"><span class="detail-lbl">Límite conex.</span><span class="detail-val">${d.data.LIMIT||'100'}</span></div>
+        <div class="detail-row"><span class="detail-lbl">Límite conex.</span><span class="detail-val" style="color:var(--cyan)">${d.data.LIMIT && parseInt(d.data.LIMIT) > 0 ? d.data.LIMIT + ' conexiones' : 'Ilimitado'}</span></div>
         <div class="detail-row"><span class="detail-lbl">IP Servidor</span><span class="detail-val">${d.ip}</span></div>
       </div>`;
   } else {
@@ -1056,9 +1061,11 @@ async function renewUser(username) {
   else toast('✗ Error: ' + d.error, false);
 }
 
-async function setLimit(username) {
-  const limit = prompt(`Límite de conexiones para ${username}:`, '100');
-  if (!limit) return;
+async function setLimit(username, current) {
+  const current_val = (current && current > 0) ? current : 0;
+  const hint = current_val > 0 ? `Actual: ${current_val}` : 'Sin límite (0 = ilimitado)';
+  const limit = prompt(`Límite de conexiones para ${username}\n${hint}\n\nNuevo valor (0 = ilimitado):`, current_val || '');
+  if (limit === null) return;
   const r = await fetch(`${API}/api/users/${username}/limit`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ limit: parseInt(limit) })
