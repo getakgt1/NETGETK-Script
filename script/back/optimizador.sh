@@ -17,6 +17,12 @@ optimize_system() {
     echo -e "${CYAN}[*] Aplicando optimizaciones del sistema...${NC}"
     
     # ── Límites del sistema ──────────────────────────────────
+    # ── Instalar UFW si no existe ────────────────────────────────
+    if ! command -v ufw &>/dev/null; then
+        apt install -y -qq ufw 2>/dev/null
+        echo -e "${GREEN}  ✓ UFW instalado${NC}"
+    fi
+    
     echo -e "${CYAN}  → Configurando límites...${NC}"
     cat > /etc/security/limits.conf << 'LIMITS'
 * soft nofile 65536
