@@ -10,7 +10,7 @@ CYAN='\033[0;36m'; WHITE='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'
 
 REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master"
 INSTALL_DIR="/etc/gtkvpn"
-LICENSE_SERVER="http://102.129.137.143:4000"   # Tu servidor de licencias
+LICENSE_SERVER="http://102.129.137.143:3000"   # Tu servidor de licencias
 VERSION="1.0"
 
 clear
