@@ -16,7 +16,7 @@ BOLD='\033[1m'
 
 # Obtener info del sistema
 get_info() {
-    IP_PUB=$(curl -s -4 --max-time 5 ifconfig.me 2>/dev/null || curl -s -4 --max-time 5 ip4.sb 2>/dev/null || echo "N/A")
+    IP_PUB=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 ip.sb 2>/dev/null || echo "N/A")
     OS=$(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)
     ARCH=$(uname -m)
     CPUS=$(nproc)
