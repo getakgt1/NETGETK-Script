@@ -191,9 +191,9 @@ menu_update() {
     echo ""
     echo -e "${MAGENTA} 🔄 UPDATE / REMOVE${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
-    echo -e " ${WHITE}[1]${NC} ⇒ Actualizar GTKVPN Script"
+    echo -e " ${WHITE}[1]${NC} ⇒ Actualizar NETGETK Script"
     echo -e " ${WHITE}[2]${NC} ⇒ Ver changelog"
-    echo -e " ${WHITE}[3]${NC} ⇒ ${RED}Desinstalar GTKVPN Script${NC}"
+    echo -e " ${WHITE}[3]${NC} ⇒ ${RED}Desinstalar NETGETK Script${NC}"
     echo ""
     echo -e " ${WHITE}[0]${NC} ⇒ ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -215,7 +215,6 @@ menu_update() {
             echo -e "${CYAN}[*] Descargando actualizaciones desde GitHub...${NC}"
             echo ""
 
-            # Lista de archivos a actualizar
             declare -A FILES=(
                 ["script/manager"]="$INSTALL_DIR/manager"
                 ["script/banner.sh"]="$INSTALL_DIR/banner.sh"
@@ -237,24 +236,14 @@ menu_update() {
             for src in "${!FILES[@]}"; do
                 dest="${FILES[$src]}"
                 mkdir -p "$(dirname $dest)"
-                if wget -q --timeout=10 -O "${dest}.tmp" "$REPO/$src" 2>/dev/null; then
-                    # Verificar que el archivo descargado no está vacío
-                    if [[ -s "${dest}.tmp" ]]; then
-                        mv "${dest}.tmp" "$dest"
-                        chmod +x "$dest" 2>/dev/null
-                        fname=$(basename $dest)
-                        echo -e "  ${GREEN}✓${NC} $fname"
-                        ((UPDATE_OK++))
-                    else
-                        rm -f "${dest}.tmp"
-                        fname=$(basename $dest)
-                        echo -e "  ${RED}✗${NC} $fname (vacío)"
-                        ((UPDATE_FAIL++))
-                    fi
+                if wget -q --timeout=10 -O "${dest}.tmp" "$REPO/$src" 2>/dev/null && [[ -s "${dest}.tmp" ]]; then
+                    mv "${dest}.tmp" "$dest"
+                    chmod +x "$dest" 2>/dev/null
+                    echo -e "  ${GREEN}✓${NC} $(basename $dest)"
+                    ((UPDATE_OK++))
                 else
                     rm -f "${dest}.tmp"
-                    fname=$(basename $dest)
-                    echo -e "  ${YELLOW}~${NC} $fname (sin cambios)"
+                    echo -e "  ${YELLOW}~${NC} $(basename $dest) (sin cambios)"
                     ((UPDATE_FAIL++))
                 fi
             done
@@ -264,20 +253,16 @@ menu_update() {
             echo -e " ${GREEN}✓ Actualizados: $UPDATE_OK archivos${NC}"
             [[ $UPDATE_FAIL -gt 0 ]] && echo -e " ${YELLOW}~ Sin cambios: $UPDATE_FAIL archivos${NC}"
 
-            # Reiniciar panel si se actualizó
             echo ""
             echo -e "${CYAN}[*] Reiniciando panel web...${NC}"
             cd "$INSTALL_DIR/panel" && npm install --silent 2>/dev/null
             pm2 restart netgetk-panel 2>/dev/null &&                 echo -e "  ${GREEN}✓ Panel reiniciado${NC}" ||                 echo -e "  ${YELLOW}~ Panel no activo${NC}"
 
-            # Actualizar enlace del manager
             ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu 2>/dev/null
             chmod +x /usr/local/bin/menu 2>/dev/null
 
             echo ""
             echo -e "${GREEN}[+] Actualización completada${NC}"
-            echo -e "${YELLOW}    Ejecuta 'menu' para ver los cambios${NC}"
-            echo ""
             echo -ne "${WHITE}Presiona Enter para continuar...${NC}"; read
             exec /usr/local/bin/menu ;;
         2)
@@ -288,27 +273,19 @@ menu_update() {
             read CONF
             if [[ "$CONF" == "si" ]]; then
                 echo -e "${CYAN}[*] Desinstalando servicios...${NC}"
-                # Detener y deshabilitar servicios
-                for svc in gtkvpn-autostart ssh-ws xray stunnel4 nginx fail2ban; do
+                for svc in ws-proxy xray socks5-gtkvpn stunnel4 nginx fail2ban gtkvpn-autostart; do
                     systemctl stop $svc 2>/dev/null
                     systemctl disable $svc 2>/dev/null
                 done
-                # Eliminar archivos del script
-                rm -rf /etc/gtkvpn /etc/netgetk
+                pm2 delete netgetk-panel 2>/dev/null
+                rm -rf /etc/gtkvpn
                 rm -f /usr/local/bin/menu
-                rm -f /etc/systemd/system/ssh-ws.service
-                rm -f /etc/systemd/system/gtkvpn-autostart.service
-                rm -f /usr/local/bin/ssh-ws.py
-                # Eliminar reglas UFW agregadas
-                ufw delete allow 80/tcp 2>/dev/null
-                ufw delete allow 443/tcp 2>/dev/null
-                ufw delete allow 2095/tcp 2>/dev/null
-                ufw delete allow 32595/tcp 2>/dev/null
-                ufw delete allow 8080/tcp 2>/dev/null
-                # Limpiar crontab
+                rm -f /usr/local/bin/ws-proxy.py
+                rm -f /etc/systemd/system/ws-proxy.service
+                rm -f /etc/systemd/system/socks5-gtkvpn.service
                 crontab -l 2>/dev/null | grep -v gtkvpn | grep -v netgetk | crontab -
                 systemctl daemon-reload
-                echo -e "${GREEN}[+] GTKVPN Script eliminado completamente${NC}"
+                echo -e "${GREEN}[+] NETGETK Script eliminado completamente${NC}"
                 exit 0
             fi
             menu_update ;;
