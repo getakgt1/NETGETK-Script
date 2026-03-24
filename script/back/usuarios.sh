@@ -37,8 +37,8 @@ create_ssh() {
     EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
     
     # Crear usuario sin home, con shell restringida
-    useradd -e "$EXPIRY" -s /bin/bash -M "$USERNAME" 2>/dev/null
-    printf '%s:%s\n' "$USERNAME" "$PASSWORD" | chpasswd
+    useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME" 2>/dev/null
+    echo "$USERNAME:$PASSWORD" | chpasswd
     
     # Guardar info del usuario
     mkdir -p "$USERS_DIR"
@@ -85,78 +85,32 @@ delete_ssh() {
 }
 
 # ─── VER USUARIOS ACTIVOS ─────────────────────────────────────
-get_session_time_dropbear() {
-    local pid="$1"
-    [[ -z "$pid" ]] && { echo "00:00:00"; return; }
-    local etime
-    etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
-    [[ -z "$etime" ]] && { echo "00:00:00"; return; }
-    local days=0 hours=0 mins=0 secs=0
-    if   [[ "$etime" =~ ^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)$ ]]; then
-        days=${BASH_REMATCH[1]}; hours=${BASH_REMATCH[2]}; mins=${BASH_REMATCH[3]}; secs=${BASH_REMATCH[4]}
-    elif [[ "$etime" =~ ^([0-9]+):([0-9]+):([0-9]+)$ ]]; then
-        hours=${BASH_REMATCH[1]}; mins=${BASH_REMATCH[2]}; secs=${BASH_REMATCH[3]}
-    elif [[ "$etime" =~ ^([0-9]+):([0-9]+)$ ]]; then
-        mins=${BASH_REMATCH[1]}; secs=${BASH_REMATCH[2]}
-    fi
-    printf "%02d:%02d:%02d" "$(( days*24 + hours ))" "$(( 10#$mins ))" "$(( 10#$secs ))"
-}
-
 active_users() {
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                   USUARIOS CONECTADOS                        ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║            USUARIOS CONECTADOS               ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e " ${WHITE}USUARIO SSH          CONEXIONES         HORA LOGIN${NC}"
-    echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
-
-    declare -A SEEN
-    local total=0
-
-    # Dropbear: verificar PID activo en sistema y sin Exit en auth.log
-    while IFS= read -r pid; do
-        [[ -z "$pid" ]] && continue
-        local has_exit
-        has_exit=$(grep "dropbear\[${pid}\].*Exit" /var/log/auth.log 2>/dev/null)
-        [[ -n "$has_exit" ]] && continue
-        local user
-        user=$(grep "dropbear\[${pid}\].*Password auth succeeded" /var/log/auth.log 2>/dev/null | awk -F"'" '{print $2}')
-        [[ -z "$user" || "$user" == "root" ]] && continue
-        [[ -n "${SEEN[$user]}" ]] && continue
-        kill -0 "$pid" 2>/dev/null || continue
-        SEEN[$user]=1
-        local conns hora
-        conns=$(grep "Password auth succeeded for '${user}'" /var/log/auth.log 2>/dev/null | \
-                awk '{match($0,/dropbear\[([0-9]+)\]/,a); print a[1]}' | \
-                while read p; do kill -0 "$p" 2>/dev/null && echo "$p"; done | wc -l)
-        [[ $conns -lt 1 ]] && conns=1
-        hora=$(get_session_time_dropbear "$pid")
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
-        (( total++ ))
-    done < <(grep "Password auth succeeded" /var/log/auth.log 2>/dev/null | \
-             awk '{match($0,/dropbear\[([0-9]+)\]/,a); print a[1]}' | sort -u)
-
-    # OpenSSH normal via ps
-    while IFS= read -r user; do
-        [[ -z "$user" || "$user" == "root" || "$user" == "sshd" || "$user" == "nobody" ]] && continue
-        [[ -n "${SEEN[$user]}" ]] && continue
-        SEEN[$user]=1
-        local conns hora
-        conns=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | wc -l)
-        [[ $conns -lt 1 ]] && conns=1
-        hora=$(ps aux 2>/dev/null | grep "sshd: ${user}" | grep -v grep | grep -v priv | head -1 | awk '{print $9}')
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "[${conns}/100]" "$hora"
-        (( total++ ))
-    done < <(ps aux 2>/dev/null | grep "sshd:" | grep -v grep | grep -v priv | grep -v "sshd -D" | awk '{print $1}' | grep -Ev "^(root|sshd|nobody)$" | sort -u)
-
-    [[ $total -eq 0 ]] && echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
+    
+    # SSH activos
+    SSH_ACTIVE=$(who | awk '{print $1}' | sort -u)
+    if [[ -z "$SSH_ACTIVE" ]]; then
+        echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
+    else
+        echo -e " ${WHITE}USUARIO SSH          DESDE              HORA${NC}"
+        echo -e "${CYAN} ─────────────────────────────────────────────${NC}"
+        while IFS= read -r user; do
+            INFO=$(who | grep "^$user" | head -1)
+            HORA=$(echo "$INFO" | awk '{print $3, $4}')
+            IP=$(echo "$INFO" | grep -oP '\(\K[^\)]+' | head -1)
+            printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "${IP:-local}" "$HORA"
+        done <<< "$SSH_ACTIVE"
+    fi
+    
     echo ""
-    echo -e " ${WHITE}Total SSH activos: ${GREEN}${total}${NC}"
+    echo -e " ${WHITE}Total SSH activos: ${GREEN}$(who | wc -l)${NC}"
     press_enter
 }
-
-
 
 # ─── LISTAR USUARIOS ─────────────────────────────────────────
 list_users() {
@@ -169,7 +123,7 @@ list_users() {
     echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
     
     if [[ -d "$USERS_DIR" ]]; then
-        for f in "$USERS_DIR"/*.info; do
+        for f in "$USERS_DIR"/*.info 2>/dev/null; do
             [[ -f "$f" ]] || continue
             source "$f"
             
@@ -346,49 +300,25 @@ PYEOF
 # ─── RENOVAR USUARIO ──────────────────────────────────────────
 renew_user() {
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                   RENOVAR USUARIO                            ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e " ${WHITE}Usuarios disponibles:${NC}"
-    echo -e "${CYAN} ──────────────────────────────────────────────────────${NC}"
-    if [[ -d "$USERS_DIR" ]]; then
-        for f in "$USERS_DIR"/*.info; do
-            [[ -f "$f" ]] || continue
-            UNAME=$(grep "^USERNAME=" "$f" | cut -d= -f2)
-            UEXPIRY=$(grep "^EXPIRY=" "$f" | cut -d= -f2)
-            TODAY=$(date +%Y-%m-%d)
-            if [[ "$UEXPIRY" < "$TODAY" ]]; then
-                USTATUS="${RED}EXPIRADO${NC}"
-            else
-                USTATUS="${GREEN}ACTIVO${NC}"
-            fi
-            printf " ${CYAN}%-18s${NC} ${YELLOW}expira: %-12s${NC} %b\n" "$UNAME" "$UEXPIRY" "$USTATUS"
-        done
-    else
-        echo -e " ${YELLOW}Sin usuarios registrados${NC}"
-    fi
-    echo ""
-    echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read -r RENEW_USER
-    echo -ne " ${WHITE}Nuevos días : ${NC}"; read -r RENEW_DIAS
-    [[ -z "$RENEW_USER" ]] && { echo -e "${RED}[!] Nombre vacío${NC}"; press_enter; return; }
-    [[ -z "$RENEW_DIAS" ]] && RENEW_DIAS=30
-
-    NEW_EXPIRY=$(date -d "+${RENEW_DIAS} days" +%Y-%m-%d)
-
+    echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read USERNAME
+    echo -ne " ${WHITE}Nuevos días : ${NC}"; read DIAS
+    [[ -z "$DIAS" ]] && DIAS=30
+    
+    NEW_EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
+    
     # Renovar SSH
-    if id "$RENEW_USER" &>/dev/null; then
-        chage -E "$NEW_EXPIRY" "$RENEW_USER" 2>/dev/null
-        usermod -e "$NEW_EXPIRY" "$RENEW_USER" 2>/dev/null
+    if id "$USERNAME" &>/dev/null; then
+        chage -E "$NEW_EXPIRY" "$USERNAME" 2>/dev/null
+        usermod -e "$NEW_EXPIRY" "$USERNAME" 2>/dev/null
     fi
-
+    
     # Actualizar archivo info
-    INFO_FILE="$USERS_DIR/${RENEW_USER}.info"
+    INFO_FILE="$USERS_DIR/${USERNAME}.info"
     [[ -f "$INFO_FILE" ]] && sed -i "s/EXPIRY=.*/EXPIRY=$NEW_EXPIRY/" "$INFO_FILE"
-    INFO_FILE="$USERS_DIR/${RENEW_USER}_xray.info"
+    INFO_FILE="$USERS_DIR/${USERNAME}_xray.info"
     [[ -f "$INFO_FILE" ]] && sed -i "s/EXPIRY=.*/EXPIRY=$NEW_EXPIRY/" "$INFO_FILE"
-
-    echo -e "${GREEN}[+] Usuario ${RENEW_USER} renovado hasta ${NEW_EXPIRY}${NC}"
+    
+    echo -e "${GREEN}[+] Usuario ${USERNAME} renovado hasta ${NEW_EXPIRY}${NC}"
     press_enter
 }
 
@@ -399,7 +329,7 @@ clean_expired() {
     COUNT=0
     
     if [[ -d "$USERS_DIR" ]]; then
-        for f in "$USERS_DIR"/*.info; do
+        for f in "$USERS_DIR"/*.info 2>/dev/null; do
             [[ -f "$f" ]] || continue
             source "$f"
             if [[ "$EXPIRY" < "$TODAY" ]]; then
