@@ -1,220 +1,171 @@
 #!/bin/bash
-# ================================================================
-#   NETGETK VPN Script - Instalador Principal
-#   GitHub: https://github.com/NETGETK/NETGETK-Script
-#   By: NETGETK
-# ================================================================
+# ============================================================
+#   NETGETK VPN Script - Setup Principal
+#   By: NETGETK | github.com/getakgt1/NETGETK-Script
+#   Ubuntu 20.04 / 22.04 / 24.04
+# ============================================================
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; WHITE='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
 
-REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master"
-INSTALL_DIR="/etc/gtkvpn"
-LICENSE_SERVER="http://102.129.137.143:3000"   # Tu servidor de licencias
-VERSION="1.0"
+# --- Verificar root ---
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}[!] Este script debe ejecutarse como root${NC}"
+   exit 1
+fi
+
+# --- Verificar Ubuntu ---
+source /etc/os-release 2>/dev/null
+if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
+    echo -e "${YELLOW}[!] Recomendado: Ubuntu 20.04 / 22.04 / 24.04${NC}"
+fi
 
 clear
 echo -e "${CYAN}"
-cat << 'LOGO'
+cat << "EOF"
   _   _ _____ _____ ____  _____ _____ _  __
  | \ | | ____|_   _/ ___|| ____|_   _| |/ /
  |  \| |  _|   | || |  _ |  _|   | | | ' /
  | |\  | |___  | || |_| || |___  | | | . \
  |_| \_|_____| |_| \____||_____| |_| |_|\_\
-LOGO
-echo -e "${WHITE}     VPN SCRIPT v${VERSION} | Ubuntu 20/22 LTS${NC}"
-echo -e "${CYAN}================================================================${NC}"
+EOF
+echo -e "${WHITE}        NETGETK VPN SCRIPT INSTALLER${NC}"
+echo -e "${YELLOW}        $(lsb_release -ds 2>/dev/null || echo "Linux") | $(uname -m)${NC}"
 echo ""
 
-# ── Verificar root ─────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && echo -e "${RED}[!] Ejecutar como root${NC}" && exit 1
+echo -e "${GREEN}[*] Iniciando instalación...${NC}"
+sleep 1
 
-# ── Verificar Ubuntu ───────────────────────────────────────────
-source /etc/os-release 2>/dev/null
-if [[ "$ID" != "ubuntu" ]]; then
-    echo -e "${RED}[!] Solo Ubuntu 20.04 / 22.04${NC}"; exit 1
-fi
+# --- Actualizar sistema ---
+echo -e "${CYAN}[1/7] Actualizando sistema...${NC}"
+apt update -y -qq 2>/dev/null
+apt upgrade -y -qq 2>/dev/null
 
-# ── Obtener IP del VPS ─────────────────────────────────────────
-VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
-         curl -4 -s --max-time 5 ip.sb 2>/dev/null || \
-         curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
-         hostname -I | awk '{print $1}')
-
-echo -e " ${WHITE}IP detectada:${NC} ${CYAN}$VPS_IP${NC}"
-echo ""
-
-# ── Verificar si ya está instalado ────────────────────────────
-if [[ -f "$INSTALL_DIR/config.conf" ]] && [[ "$1" != "update" ]]; then
-    source "$INSTALL_DIR/config.conf" 2>/dev/null
-    if [[ -n "$LICENSE_KEY" ]]; then
-        echo -e "${YELLOW}[!] Script ya instalado. Abriendo menú...${NC}"
-        sleep 1; exec /usr/local/bin/menu
-        exit 0
-    fi
-fi
-
-# ── Solicitar KEY de licencia ──────────────────────────────────
-echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${YELLOW}  Este script requiere una licencia válida.${NC}"
-echo -e "${YELLOW}  Contacta: @NETGETK en Telegram para obtener tu KEY.${NC}"
-echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-echo -ne " ${WHITE}Ingresa tu LICENSE KEY: ${NC}"
-read LICENSE_KEY
-
-if [[ -z "$LICENSE_KEY" ]]; then
-    echo -e "${RED}[!] KEY requerida${NC}"; exit 1
-fi
-
-# ── Validar licencia contra el servidor ───────────────────────
-echo ""
-echo -e "${CYAN}[*] Validando licencia...${NC}"
-
-VALIDATE_RESP=$(curl -s --max-time 10 \
-    -X POST "$LICENSE_SERVER/api/validate" \
-    -H "Content-Type: application/json" \
-    -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}" 2>/dev/null)
-
-STATUS=$(echo "$VALIDATE_RESP" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-MSG=$(echo "$VALIDATE_RESP" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
-OWNER=$(echo "$VALIDATE_RESP" | grep -o '"owner":"[^"]*"' | cut -d'"' -f4)
-EXPIRY=$(echo "$VALIDATE_RESP" | grep -o '"expiry":"[^"]*"' | cut -d'"' -f4)
-
-if [[ "$STATUS" != "ok" ]]; then
-    echo ""
-    echo -e "${RED}╔══════════════════════════════════════╗${NC}"
-    echo -e "${RED}║     ✗ LICENCIA INVÁLIDA               ║${NC}"
-    echo -e "${RED}╠══════════════════════════════════════╣${NC}"
-    echo -e "${RED}║${NC} Motivo: ${YELLOW}$MSG${NC}"
-    echo -e "${RED}╚══════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e " Contacta ${CYAN}@NETGETK${NC} en Telegram para soporte."
-    exit 1
-fi
-
-echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         ✓ LICENCIA VÁLIDA                  ║${NC}"
-echo -e "${GREEN}╠══════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}Usuario :${NC} ${CYAN}$OWNER${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}Expira  :${NC} ${YELLOW}$EXPIRY${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}IP VPS  :${NC} ${CYAN}$VPS_IP${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-echo ""
-sleep 2
-
-# ── Instalar dependencias ──────────────────────────────────────
-echo -e "${CYAN}[1/5] Actualizando sistema...${NC}"
-apt-get update -y 2>/dev/null
-apt-get upgrade -y 2>/dev/null
-apt-get dist-upgrade -y 2>/dev/null
-apt-get autoremove -y 2>/dev/null
-apt-get autoclean -y 2>/dev/null
-echo -e "  ${GREEN}✓ Sistema actualizado${NC}"
-
-echo -e "${CYAN}[2/5] Instalando dependencias...${NC}"
+# --- Instalar dependencias base ---
+echo -e "${CYAN}[2/7] Instalando dependencias...${NC}"
 apt install -y -qq \
-    curl wget git unzip net-tools lsof \
-    python3 python3-pip python3-websockets \
-    openssh-server fail2ban ufw \
-    jq bc screen cron vnstat htop \
-    openssl uuid-runtime \
-    passwd login whois \
-    iptables netcat-openbsd \
-    dropbear stunnel4 \
-    badvpn privoxy \
-    build-essential cmake \
-    2>/dev/null || true
+    curl wget git unzip zip \
+    net-tools lsof \
+    python3 python3-pip \
+    openssh-server \
+    nginx \
+    fail2ban \
+    ufw \
+    jq \
+    bc \
+    screen \
+    cron \
+    vnstat \
+    htop \
+    openssl \
+    uuid-runtime \
+    dropbear 2>/dev/null
+echo -e "${GREEN}  ✓ Dependencias instaladas${NC}"
 
-# Node.js 18+
-if ! command -v node &>/dev/null || [[ $(node -v 2>/dev/null | grep -oP '(?<=v)\d+') -lt 16 ]]; then
-    echo -e "${CYAN}  → Instalando Node.js 18...${NC}"
+# --- Instalar Node.js si no existe ---
+echo -e "${CYAN}[3/7] Verificando Node.js...${NC}"
+if ! command -v node &>/dev/null; then
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash - 2>/dev/null
     apt install -y nodejs 2>/dev/null
 fi
-echo -e "  ${GREEN}✓ Node.js $(node -v)${NC}"
+echo -e "${GREEN}  ✓ Node.js $(node -v 2>/dev/null)${NC}"
 
-# PM2
+# Instalar PM2
 if ! command -v pm2 &>/dev/null; then
-    echo -e "${CYAN}  → Instalando PM2...${NC}"
     npm install -g pm2 -q 2>/dev/null
 fi
-echo -e "  ${GREEN}✓ PM2 $(pm2 -v 2>/dev/null)${NC}"
+echo -e "${GREEN}  ✓ PM2 instalado${NC}"
 
-# ── Instalar Xray ──────────────────────────────────────────────
-echo -e "${CYAN}[3/5] Instalando Xray...${NC}"
+# --- Instalar Xray ---
+echo -e "${CYAN}[4/7] Instalando Xray...${NC}"
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u root 2>/dev/null
-mkdir -p /var/log/xray
-[[ -f /usr/local/bin/xray ]] && \
-    echo -e "${GREEN}  ✓ Xray $(/usr/local/bin/xray version 2>/dev/null | grep -oP 'Xray \K[\d.]+'  )${NC}"
+if [[ -f /usr/local/bin/xray ]]; then
+    echo -e "${GREEN}  ✓ Xray instalado${NC}"
+else
+    echo -e "${YELLOW}  ⚠ Xray: instalar manualmente desde el menú${NC}"
+fi
 
-# ── Descargar archivos del script ─────────────────────────────
-echo -e "${CYAN}[4/5] Descargando archivos...${NC}"
-mkdir -p "$INSTALL_DIR/Server" "$INSTALL_DIR/back" "$INSTALL_DIR/users" \
-         "$INSTALL_DIR/panel/public" /var/log/gtkvpn /var/log/xray
+# --- Descargar archivos del script ---
+echo -e "${CYAN}[5/7] Descargando archivos del script...${NC}"
+REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/script"
+INSTALL_DIR="/etc/gtkvpn"
+
+mkdir -p $INSTALL_DIR/Server
+mkdir -p $INSTALL_DIR/back
+mkdir -p $INSTALL_DIR/users
+mkdir -p $INSTALL_DIR/panel/public
+mkdir -p /var/log/gtkvpn
 
 # Descargar scripts
-for f in script/manager script/banner.sh script/Server/ssh.sh script/Server/xray.sh \
-          script/Server/ssl.sh script/Server/socks5.sh script/Server/slowdns.sh \
-          script/Server/udp.sh script/back/usuarios.sh script/back/contador.sh \
-          script/back/optimizador.sh script/back/firewall.sh script/back/speedtest.sh; do
-    fname=$(basename $f)
-    dir=$(dirname $f | sed "s|script/||")
-    [[ "$dir" == "script" ]] && dir=""
-    dest="$INSTALL_DIR/${dir:+$dir/}$fname"
+SCRIPTS=(
+    "manager"
+    "banner.sh"
+    "Server/ssh.sh"
+    "Server/xray.sh"
+    "Server/ssl.sh"
+    "Server/socks5.sh"
+    "Server/slowdns.sh"
+    "Server/udp.sh"
+    "back/usuarios.sh"
+    "back/contador.sh"
+    "back/optimizador.sh"
+    "back/firewall.sh"
+    "back/speedtest.sh"
+)
+
+for script in "${SCRIPTS[@]}"; do
+    dest="$INSTALL_DIR/$script"
     mkdir -p "$(dirname $dest)"
-    wget -q -O "$dest" "$REPO/$f" 2>/dev/null
-    chmod +x "$dest" 2>/dev/null
+    if wget -q --timeout=15 -O "${dest}.tmp" "$REPO/$script" 2>/dev/null && [[ -s "${dest}.tmp" ]]; then
+        mv "${dest}.tmp" "$dest"
+        chmod +x "$dest"
+        echo -e "  ${GREEN}✓${NC} $(basename $script)"
+    else
+        rm -f "${dest}.tmp"
+        echo -e "  ${YELLOW}⚠${NC} $(basename $script) (fallo, verificar GitHub)"
+    fi
 done
 
-# Descargar panel
-for f in panel/server.js panel/package.json panel/public/index.html; do
-    wget -q -O "$INSTALL_DIR/$f" "$REPO/$f" 2>/dev/null
+# Descargar panel web
+PANEL_REPO="https://raw.githubusercontent.com/getakgt1/NETGETK-Script/master/panel"
+for pfile in "server.js" "public/index.html"; do
+    dest="$INSTALL_DIR/panel/$pfile"
+    mkdir -p "$(dirname $dest)"
+    wget -q --timeout=15 -O "$dest" "$PANEL_REPO/$pfile" 2>/dev/null || true
 done
 
-# Instalar dependencias del panel
-cd "$INSTALL_DIR/panel" && npm install --silent 2>/dev/null
+# --- Configuración inicial ---
+echo -e "${CYAN}[6/7] Configurando sistema...${NC}"
 
-# ── Configuración inicial ──────────────────────────────────────
-echo -e "${CYAN}[5/5] Configurando sistema...${NC}"
+VPS_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
 
-# Guardar configuración
-cat > "$INSTALL_DIR/config.conf" << CONF
-LICENSE_KEY=$LICENSE_KEY
-LICENSE_OWNER=$OWNER
-LICENSE_EXPIRY=$EXPIRY
-VPS_IP=$VPS_IP
+# Guardar config
+cat > $INSTALL_DIR/config.conf << CONF
 INSTALL_DATE=$(date +%Y-%m-%d)
-SCRIPT_VERSION=$VERSION
+SCRIPT_VERSION=$(lsb_release -ds 2>/dev/null)
+VPS_IP=$VPS_IP
 SSH_PORT=22
 XRAY_PORT=32595
 XRAY_WS_PATH=/
-SOCKS_PORT=8080
 UDPGW_PORT=7300
-SSH_WS_PORT=2082
+SSH_WS_PORT=80
 PANEL_PORT=2095
+SSH_DB_PORT=2222
+UDP_PORT=36712
+SOCKS_PORT=8080
+SOCKS_ENABLED=false
 CONF
-# Crear directorios de compatibilidad
-mkdir -p "$INSTALL_DIR/users" "$INSTALL_DIR/back" "$INSTALL_DIR/Server"
-# Enlace de compatibilidad /etc/netgetk -> /etc/gtkvpn
-[[ ! -e /etc/netgetk ]] && ln -sf /etc/gtkvpn /etc/netgetk 2>/dev/null || true
 
-# Comando global menu
-ln -sf "$INSTALL_DIR/manager" /usr/local/bin/menu
-# Compatibilidad: crear también /etc/netgetk apuntando a /etc/gtkvpn
-[[ ! -d /etc/netgetk ]] && ln -sf /etc/gtkvpn /etc/netgetk 2>/dev/null || true
-chmod +x /usr/local/bin/menu
-
-# SSH optimización básica
-# Optimizar SSH para tunneling
-sed -i 's/#MaxAuthTries.*/MaxAuthTries 6/' /etc/ssh/sshd_config 2>/dev/null
-sed -i 's/#AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null
-sed -i 's/AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null
-grep -q "AllowTcpForwarding" /etc/ssh/sshd_config || echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
-grep -q "GatewayPorts" /etc/ssh/sshd_config || echo "GatewayPorts yes" >> /etc/ssh/sshd_config
-grep -q "UsePAM" /etc/ssh/sshd_config && sed -i 's/UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
-systemctl restart ssh 2>/dev/null || service ssh restart 2>/dev/null
+# Optimización SSH
+sed -i 's/#MaxAuthTries.*/MaxAuthTries 5/' /etc/ssh/sshd_config 2>/dev/null
+sed -i 's/#ClientAliveInterval.*/ClientAliveInterval 60/' /etc/ssh/sshd_config 2>/dev/null
+sed -i 's/#ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config 2>/dev/null
+grep -q "AllowTcpForwarding yes" /etc/ssh/sshd_config 2>/dev/null || echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
+systemctl restart ssh 2>/dev/null
 
 # UFW básico
 ufw --force reset 2>/dev/null
@@ -226,29 +177,44 @@ ufw allow 443/tcp 2>/dev/null
 ufw allow 2095/tcp 2>/dev/null
 ufw allow 32595/tcp 2>/dev/null
 ufw allow 8080/tcp 2>/dev/null
+ufw allow 2222/tcp 2>/dev/null
+ufw allow 7300/udp 2>/dev/null
 ufw --force enable 2>/dev/null
 
 # Instalar panel web
-cd "$INSTALL_DIR/panel"
-pm2 delete netgetk-panel 2>/dev/null
-pm2 start server.js --name netgetk-panel 2>/dev/null
-pm2 startup 2>/dev/null
-pm2 save 2>/dev/null
-ufw allow 2095/tcp 2>/dev/null
+echo -e "${CYAN}[7/7] Instalando panel web...${NC}"
+if [[ -f "$INSTALL_DIR/panel/server.js" ]]; then
+    cd "$INSTALL_DIR/panel"
+    npm install express cors bcryptjs jsonwebtoken uuid --save -q 2>/dev/null
+    pm2 delete netgetk-panel 2>/dev/null
+    pm2 start server.js --name netgetk-panel 2>/dev/null
+    pm2 save 2>/dev/null
+    pm2 startup 2>/dev/null | tail -1 | bash 2>/dev/null
+    echo -e "${GREEN}  ✓ Panel web activo en :2095${NC}"
+fi
 
-# Cron: verificar licencia diariamente
-(crontab -l 2>/dev/null | grep -v netgetk-license; \
- echo "0 6 * * * curl -s -X POST $LICENSE_SERVER/api/heartbeat -H 'Content-Type: application/json' -d '{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\"}' > /dev/null 2>&1") | crontab -
+# Crear enlace global 'menu'
+ln -sf $INSTALL_DIR/manager /usr/local/bin/menu
+chmod +x /usr/local/bin/menu
+
+# Cron: limpiar usuarios expirados cada hora
+(crontab -l 2>/dev/null | grep -v "usuarios.sh clean"; echo "0 * * * * $INSTALL_DIR/back/usuarios.sh clean auto") | crontab -
+
+# Habilitar cron
+systemctl enable cron 2>/dev/null
+systemctl start cron 2>/dev/null
 
 echo ""
-echo -e "${GREEN}╔════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║    ✓ NETGETK SCRIPT INSTALADO CORRECTAMENTE     ║${NC}"
-echo -e "${GREEN}╠════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}Panel Web:${NC} ${CYAN}http://$VPS_IP:2095${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}Usuario:${NC}   ${CYAN}admin${NC}  ${WHITE}Pass:${NC} ${CYAN}admin123${NC}"
-echo -e "${GREEN}║${NC}"
-echo -e "${GREEN}║${NC} ${WHITE}Comando:${NC}   ${CYAN}menu${NC}  (para abrir el manager)"
-echo -e "${GREEN}╚════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   NETGETK SCRIPT INSTALADO CORRECTAMENTE  ║${NC}"
+echo -e "${GREEN}╠══════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║${NC} ${WHITE}IP VPS   :${NC} ${CYAN}$VPS_IP${NC}"
+echo -e "${GREEN}║${NC} ${WHITE}Panel    :${NC} ${CYAN}http://$VPS_IP:2095${NC}"
+echo -e "${GREEN}║${NC} ${WHITE}Usuario  :${NC} ${CYAN}admin / admin123${NC}"
+echo -e "${GREEN}╠══════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║${NC} ${YELLOW}Ejecuta ${WHITE}menu${YELLOW} para abrir el panel de control${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo ""
+
 sleep 2
-exec /usr/local/bin/menu
+exec $INSTALL_DIR/manager
