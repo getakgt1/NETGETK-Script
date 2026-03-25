@@ -71,6 +71,9 @@ create_ssh() {
     EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
 
     # Crear usuario sin home, con shell restringida
+    # FIX CRITICO: Dropbear rechaza usuarios cuya shell no esta en /etc/shells
+    grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
+
     useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME" 2>/dev/null
     echo "$USERNAME:$PASSWORD" | chpasswd
 
@@ -137,27 +140,59 @@ delete_ssh() {
 # --------- VER USUARIOS ACTIVOS ---------------------------------------------------------------------------------------------------------------
 active_users() {
     echo ""
-    echo -e "${CYAN}------------------------------------------------------------------------------------------------------------------------------------------------${NC}"
-    echo -e "${CYAN}---            USUARIOS CONECTADOS               ---${NC}"
-    echo -e "${CYAN}------------------------------------------------------------------------------------------------------------------------------------------------${NC}"
+    echo -e "${CYAN}-----------------------------------------------------------${NC}"
+    echo -e "${CYAN}---       USUARIOS CONECTADOS (VPN + Admin)             ---${NC}"
+    echo -e "${CYAN}-----------------------------------------------------------${NC}"
     echo ""
 
-    SSH_ACTIVE=$(who | awk '{print $1}' | sort -u)
-    if [[ -z "$SSH_ACTIVE" ]]; then
-        echo -e " ${YELLOW}Sin usuarios SSH conectados${NC}"
-    else
-        echo -e " ${WHITE}USUARIO SSH          DESDE              HORA${NC}"
-        echo -e "${CYAN} ---------------------------------------------------------------------------------------------------------------------------------------${NC}"
-        while IFS= read -r user; do
-            INFO=$(who | grep "^$user" | head -1)
-            HORA=$(echo "$INFO" | awk '{print $3, $4}')
-            IP=$(echo "$INFO" | grep -oP '\(\K[^\)]+' | head -1)
-            printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$user" "${IP:-local}" "$HORA"
-        done <<< "$SSH_ACTIVE"
+    # Sesion admin SSH directa
+    SSH_ACTIVE=$(who | grep -v "^$" | wc -l)
+    if [[ $SSH_ACTIVE -gt 0 ]]; then
+        echo -e " ${YELLOW}[ SESION ADMIN ]${NC}"
+        printf " ${WHITE}%-20s %-18s %-20s${NC}\n" "USUARIO" "DESDE" "HORA"
+        echo -e "${CYAN} ---------------------------------------------------------${NC}"
+        while IFS= read -r line; do
+            USER=$(echo "$line" | awk '{print $1}')
+            HORA=$(echo "$line" | awk '{print $3, $4}')
+            IP=$(echo "$line" | grep -oP '\(\K[^\)]+' | head -1)
+            printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" \
+                "$USER" "${IP:-local}" "$HORA"
+        done < <(who)
+        echo ""
     fi
 
+    # Usuarios VPN via WebSocket + Dropbear
+    echo -e " ${YELLOW}[ USUARIOS VPN ACTIVOS ]${NC}"
+    printf " ${WHITE}%-20s %-12s %-20s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION"
+    echo -e "${CYAN} ---------------------------------------------------------${NC}"
+
+    MAIN_PID=$(pgrep -o dropbear 2>/dev/null)
+    ACTIVE_PIDS=$(pgrep dropbear 2>/dev/null | grep -v "^${MAIN_PID}$")
+    JOURNAL=$(journalctl -u dropbear --no-pager -n 500 2>/dev/null)
+    VPN_COUNT=0
+
+    for pid in $ACTIVE_PIDS; do
+        EXIT_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "^.*Exit ")
+        [[ -n "$EXIT_LINE" ]] && continue
+
+        AUTH_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "auth succeeded for")
+        CONN_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "Child connection from")
+
+        if [[ -n "$AUTH_LINE" ]]; then
+            UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=for ')[^']+")
+            IP_RAW=$(echo "$CONN_LINE" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            HORA=$(echo "$CONN_LINE" | awk '{print $1, $2, $3}')
+            [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="WebSocket" || TIPO="Directo"
+            printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" \
+                "$UNAME" "$TIPO" "$HORA"
+            ((VPN_COUNT++))
+        fi
+    done
+
+    [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN conectados${NC}"
+
     echo ""
-    echo -e " ${WHITE}Total SSH activos: ${GREEN}$(who | wc -l)${NC}"
+    echo -e " ${WHITE}Total VPN: ${GREEN}$VPN_COUNT${NC}  |  ${WHITE}Admin: ${GREEN}$SSH_ACTIVE${NC}"
     press_enter
 }
 
