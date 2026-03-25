@@ -173,6 +173,30 @@ show_online() {
 
     echo ""
 
+
+    # ── XRAY/VLESS ───────────────────────────────────────────
+    echo -e " ${YELLOW}[ USUARIOS XRAY/VLESS ]${NC}"
+    XRAY_LOG="/var/log/xray/access.log"
+    XRAY_COUNT=0
+    if [[ -f "$XRAY_LOG" && -s "$XRAY_LOG" ]]; then
+        SINCE=$(date -d '10 minutes ago' '+%Y/%m/%d %H:%M')
+        printf " ${WHITE}%-20s %-20s${NC}\n" "USUARIO" "ULTIMA CONEXION"
+        echo -e "${CYAN} ---------------------------------------------------------${NC}"
+        while IFS= read -r line; do
+            UNAME=$(echo "$line" | grep -oP "(?<=email: )[^\s@]+")
+            HORA=$(echo "$line" | awk '{print $1, $2}' | cut -c1-16)
+            [[ -z "$UNAME" ]] && continue
+            printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$HORA"
+            ((XRAY_COUNT++))
+        done < <(awk -v d="$SINCE" '$0 >= d' "$XRAY_LOG" | grep "email:" | \
+            grep -oP ".*email: [^\s]+" | sort -t: -k4 -u)
+        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 10 min)${NC}"
+    else
+        echo -e " ${GRAY}  Sin log de Xray disponible${NC}"
+    fi
+
+    echo ""
+
     # ── SOCKS5 ───────────────────────────────────────────────
     echo -e " ${YELLOW}[ CONEXIONES SOCKS5 ]${NC}"
     SOCKS_PORT=$(grep "SOCKS_PORT" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "8080")
@@ -194,8 +218,8 @@ show_online() {
 
     # ── RESUMEN ──────────────────────────────────────────────
     echo -e "${CYAN}===========================================================${NC}"
-    TOTAL=$((SSH_COUNT + DB_COUNT + SOCKS_CONN))
-    echo -e " ${WHITE}TOTAL CONEXIONES: ${GREEN}$TOTAL${NC}  ${GRAY}(admin:$SSH_COUNT vpn:$DB_COUNT socks:$SOCKS_CONN)${NC}"
+    TOTAL=$((SSH_COUNT + DB_COUNT + XRAY_COUNT + SOCKS_CONN))
+    echo -e " ${WHITE}TOTAL CONEXIONES: ${GREEN}$TOTAL${NC}  ${GRAY}(admin:$SSH_COUNT vpn:$DB_COUNT xray:$XRAY_COUNT socks:$SOCKS_CONN)${NC}"
     echo -e " ${GRAY}Actualizado: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
     echo -e "${CYAN}===========================================================${NC}"
     echo ""
