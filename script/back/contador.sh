@@ -182,14 +182,17 @@ show_online() {
         SINCE=$(date -d '10 minutes ago' '+%Y/%m/%d %H:%M')
         printf " ${WHITE}%-20s %-20s${NC}\n" "USUARIO" "ULTIMA CONEXION"
         echo -e "${CYAN} ---------------------------------------------------------${NC}"
+        declare -A XRAY_SEEN
         while IFS= read -r line; do
-            UNAME=$(echo "$line" | grep -oP "(?<=email: )[^\s@]+")
+            UNAME=$(echo "$line" | grep -oP "(?<=email: )[^@]+(?=@)")
             HORA=$(echo "$line" | awk '{print $1, $2}' | cut -c1-16)
             [[ -z "$UNAME" ]] && continue
-            printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$HORA"
+            XRAY_SEEN["$UNAME"]="$HORA"
+        done < <(awk -v d="$SINCE" '$0 >= d' "$XRAY_LOG" | grep "email:")
+        for UNAME in "${!XRAY_SEEN[@]}"; do
+            printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "${XRAY_SEEN[$UNAME]}"
             ((XRAY_COUNT++))
-        done < <(awk -v d="$SINCE" '$0 >= d' "$XRAY_LOG" | grep "email:" | \
-            grep -oP ".*email: [^\s]+" | sort -t: -k4 -u)
+        done
         [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 10 min)${NC}"
     else
         echo -e " ${GRAY}  Sin log de Xray disponible${NC}"
