@@ -141,7 +141,7 @@ delete_ssh() {
 active_users() {
     echo ""
     echo -e "${CYAN}-----------------------------------------------------------${NC}"
-    echo -e "${CYAN}---       USUARIOS CONECTADOS (VPN + Admin)             ---${NC}"
+    echo -e "${CYAN}---       USUARIOS CONECTADOS (VPN + UDP + Admin)       ---${NC}"
     echo -e "${CYAN}-----------------------------------------------------------${NC}"
     echo ""
 
@@ -162,37 +162,74 @@ active_users() {
     fi
 
     # Usuarios VPN via WebSocket + Dropbear
-    echo -e " ${YELLOW}[ USUARIOS VPN ACTIVOS ]${NC}"
+    echo -e " ${YELLOW}[ USUARIOS VPN/SSH ACTIVOS ]${NC}"
     printf " ${WHITE}%-20s %-12s %-20s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
-
     MAIN_PID=$(pgrep -o dropbear 2>/dev/null)
     ACTIVE_PIDS=$(pgrep dropbear 2>/dev/null | grep -v "^${MAIN_PID}$")
     JOURNAL=$(journalctl -u dropbear --no-pager -n 500 2>/dev/null)
     VPN_COUNT=0
-
     for pid in $ACTIVE_PIDS; do
         EXIT_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "^.*Exit ")
         [[ -n "$EXIT_LINE" ]] && continue
-
         AUTH_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "auth succeeded for")
         CONN_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "Child connection from")
-
         if [[ -n "$AUTH_LINE" ]]; then
             UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=for ')[^']+")
             IP_RAW=$(echo "$CONN_LINE" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             HORA=$(echo "$CONN_LINE" | awk '{print $1, $2, $3}')
             [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="WebSocket" || TIPO="Directo"
-            printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" \
-                "$UNAME" "$TIPO" "$HORA"
+            printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$TIPO" "$HORA"
             ((VPN_COUNT++))
         fi
     done
-
     [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN conectados${NC}"
 
     echo ""
-    echo -e " ${WHITE}Total VPN: ${GREEN}$VPN_COUNT${NC}  |  ${WHITE}Admin: ${GREEN}$SSH_ACTIVE${NC}"
+
+    # Usuarios UDP Custom activos
+    echo -e " ${YELLOW}[ USUARIOS UDP ACTIVOS ]${NC}"
+    printf " ${WHITE}%-20s %-18s %-20s${NC}\n" "USUARIO" "IP" "HORA CONEXION"
+    echo -e "${CYAN} ---------------------------------------------------------${NC}"
+    UDP_COUNT=0
+    UDP_LOG=$(journalctl -u udp-custom --no-pager -n 300 2>/dev/null)
+    while IFS= read -r conn; do
+        UNAME=$(echo "$conn" | grep -oP "(?<=\[user:)[^\]]+")
+        SRC=$(echo "$conn"   | grep -oP "(?<=\[src:)[^\]]+")
+        HORA=$(echo "$conn"  | awk '{print $1, $2, $3}')
+        IP=$(echo "$SRC" | cut -d: -f1)
+        DISC=$(echo "$UDP_LOG" | grep "src:$SRC" | grep "disconnected")
+        [[ -n "$DISC" ]] && continue
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$IP" "$HORA"
+        ((UDP_COUNT++))
+    done < <(echo "$UDP_LOG" | grep "Client connected")
+    [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP conectados${NC}"
+
+
+    # Usuarios Xray/VLESS activos
+    echo -e " ${YELLOW}[ USUARIOS XRAY/VLESS ACTIVOS ]${NC}"
+    printf " ${WHITE}%-20s %-20s${NC}\n" "USUARIO" "HORA CONEXION"
+    echo -e "${CYAN} ---------------------------------------------------------${NC}"
+    XRAY_COUNT=0
+    XRAY_LOG="/var/log/xray/access.log"
+    if [[ -f "$XRAY_LOG" && -s "$XRAY_LOG" ]]; then
+        SINCE=$(date -d '10 minutes ago' '+%Y/%m/%d %H:%M')
+        while IFS= read -r line; do
+            UNAME=$(echo "$line" | grep -oP "(?<=email: )[^\s@]+")
+            HORA=$(echo "$line" | awk '{print $1, $2}' | cut -c1-16)
+            [[ -z "$UNAME" ]] && continue
+            printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$HORA"
+            ((XRAY_COUNT++))
+        done < <(awk -v d="$SINCE" '$0 >= d' "$XRAY_LOG" | grep "email:" | \
+            grep -oP ".*email: [^\s]+" | sort -t: -k4 -u)
+        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 10 min)${NC}"
+    else
+        echo -e " ${GRAY}  Sin log de Xray disponible${NC}"
+    fi
+
+    echo ""
+    echo -e " ${WHITE}VPN: ${GREEN}$VPN_COUNT${NC}  | ${WHITE}Xray: ${GREEN}$XRAY_COUNT${NC}  | ${WHITE}UDP: ${GREEN}$UDP_COUNT${NC}  | ${WHITE}Admin: ${GREEN}$SSH_ACTIVE${NC}"
+    echo -e " ${WHITE}VPN: ${GREEN}$VPN_COUNT${NC}  | ${WHITE}UDP: ${GREEN}$UDP_COUNT${NC}  | ${WHITE}Admin: ${GREEN}$SSH_ACTIVE${NC}"
     press_enter
 }
 
