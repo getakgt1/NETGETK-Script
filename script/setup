@@ -168,6 +168,8 @@ grep -q "AllowTcpForwarding yes" /etc/ssh/sshd_config 2>/dev/null || echo "Allow
 systemctl restart ssh 2>/dev/null
 # Fix Dropbear: agregar /bin/false a shells validos
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
+# Fix Dropbear: agregar /bin/false a shells validos
+grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
 # UFW básico
 ufw --force reset 2>/dev/null
