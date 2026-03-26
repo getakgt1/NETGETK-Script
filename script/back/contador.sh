@@ -179,7 +179,7 @@ show_online() {
     XRAY_LOG="/var/log/xray/access.log"
     XRAY_COUNT=0
     if [[ -f "$XRAY_LOG" && -s "$XRAY_LOG" ]]; then
-        SINCE=$(date -d '10 minutes ago' '+%Y/%m/%d %H:%M')
+        SINCE=$(date -d '30 minutes ago' '+%Y/%m/%d %H:%M')
         printf " ${WHITE}%-20s %-20s${NC}\n" "USUARIO" "ULTIMA CONEXION"
         echo -e "${CYAN} ---------------------------------------------------------${NC}"
         declare -A XRAY_SEEN
@@ -193,7 +193,7 @@ show_online() {
             printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "${XRAY_SEEN[$UNAME]}"
             ((XRAY_COUNT++))
         done
-        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 10 min)${NC}"
+        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 30 min)${NC}"
     else
         echo -e " ${GRAY}  Sin log de Xray disponible${NC}"
     fi
@@ -246,3 +246,4 @@ show_online() {
 }
 
 show_online
+
