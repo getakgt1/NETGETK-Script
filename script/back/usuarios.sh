@@ -264,8 +264,7 @@ active_users() {
         UDP_HORA["$UNAME"]="$HORA"
     done < <(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected")
     for UNAME in "${!UDP_SEEN[@]}"; do
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" \
-            TIEMPO_UDP=$(calc_tiempo "${UDP_HORA[$UNAME]}")
+        TIEMPO_UDP=$(calc_tiempo "${UDP_HORA[$UNAME]}")
         printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" \
             "$UNAME" "${UDP_SEEN[$UNAME]}" "${UDP_HORA[$UNAME]}" "$TIEMPO_UDP"
         ((UDP_COUNT++))
