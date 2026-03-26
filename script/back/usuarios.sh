@@ -223,20 +223,22 @@ active_users() {
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     UDP_COUNT=0
     declare -A UDP_SEEN
+    declare -A UDP_HORA
     while IFS= read -r conn; do
         UNAME=$(echo "$conn" | grep -oP "(?<=\[user:)[^\]]+")
         SRC=$(echo "$conn"   | grep -oP "(?<=\[src:)[^\]]+")
         IP=$(echo "$SRC" | cut -d: -f1)
+        HORA=$(echo "$conn"  | awk '{print $1, $2, $3}')
         [[ -z "$UNAME" ]] && continue
         UDP_SEEN["$UNAME"]="$IP"
+        UDP_HORA["$UNAME"]="$HORA"
     done < <(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected")
     for UNAME in "${!UDP_SEEN[@]}"; do
         printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" \
-            "$UNAME" "${UDP_SEEN[$UNAME]}" "ultimos 5 min"
+            "$UNAME" "${UDP_SEEN[$UNAME]}" "${UDP_HORA[$UNAME]}"
         ((UDP_COUNT++))
     done
     [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP activos (ultimos 5 min)${NC}"
-
 
     # Usuarios Xray/VLESS activos
     echo -e " ${YELLOW}[ USUARIOS XRAY/VLESS ACTIVOS ]${NC}"
@@ -245,7 +247,7 @@ active_users() {
     XRAY_COUNT=0
     XRAY_LOG="/var/log/xray/access.log"
     if [[ -f "$XRAY_LOG" && -s "$XRAY_LOG" ]]; then
-        SINCE=$(date -d '10 minutes ago' '+%Y/%m/%d %H:%M')
+        SINCE=$(date -d '30 minutes ago' '+%Y/%m/%d %H:%M')
         declare -A XRAY_SEEN
         while IFS= read -r line; do
             UNAME=$(echo "$line" | grep -oP "(?<=email: )[^@]+(?=@)")
@@ -257,7 +259,7 @@ active_users() {
             printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "${XRAY_SEEN[$UNAME]}"
             ((XRAY_COUNT++))
         done
-        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 10 min)${NC}"
+        [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 30 min)${NC}"
     else
         echo -e " ${GRAY}  Sin log de Xray disponible${NC}"
     fi
