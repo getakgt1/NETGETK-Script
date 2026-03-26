@@ -161,14 +161,17 @@ active_users() {
         echo ""
     fi
 
-    # Usuarios VPN via WebSocket + Dropbear
+    # Usuarios VPN via WebSocket + Dropbear + OpenSSH
     echo -e " ${YELLOW}[ USUARIOS VPN/SSH ACTIVOS ]${NC}"
     printf " ${WHITE}%-20s %-12s %-20s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
+    VPN_COUNT=0
+    declare -A VPN_SEEN
+
+    # --- Dropbear (puerto 2222 via WebSocket) ---
     MAIN_PID=$(pgrep -o dropbear 2>/dev/null)
     ACTIVE_PIDS=$(pgrep dropbear 2>/dev/null | grep -v "^${MAIN_PID}$")
     JOURNAL=$(journalctl -u dropbear --no-pager -n 500 2>/dev/null)
-    VPN_COUNT=0
     for pid in $ACTIVE_PIDS; do
         EXIT_LINE=$(echo "$JOURNAL" | grep "dropbear\[$pid\]" | grep "^.*Exit ")
         [[ -n "$EXIT_LINE" ]] && continue
@@ -178,11 +181,38 @@ active_users() {
             UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=for ')[^']+")
             IP_RAW=$(echo "$CONN_LINE" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             HORA=$(echo "$CONN_LINE" | awk '{print $1, $2, $3}')
-            [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="WebSocket" || TIPO="Directo"
-            printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$TIPO" "$HORA"
-            ((VPN_COUNT++))
+            [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="WS/Dropbear" || TIPO="Dropbear"
+            VPN_SEEN["$UNAME"]="$TIPO|$HORA"
         fi
     done
+
+    # --- OpenSSH (puerto 22 directo) ---
+    # Leer sesiones activas de sshd via auth.log
+    ACTIVE_SSHD=$(ss -tnp 2>/dev/null | grep ':22' | grep ESTAB | grep sshd | \
+        grep -oP 'pid=\K[0-9]+' | sort -u)
+    for pid in $ACTIVE_SSHD; do
+        # Buscar usuario autenticado para este PID en auth.log
+        AUTH_LINE=$(grep "sshd\[$pid\]" /var/log/auth.log 2>/dev/null | \
+            grep "Accepted password for" | tail -1)
+        [[ -z "$AUTH_LINE" ]] && continue
+        UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=Accepted password for )\S+")
+        IP=$(echo "$AUTH_LINE" | grep -oP 'from \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+        HORA=$(echo "$AUTH_LINE" | awk '{print $1, $2, $3}')
+        # Excluir usuario root (admin)
+        [[ "$UNAME" == "root" ]] && continue
+        VPN_SEEN["$UNAME"]="SSH|$HORA"
+    done
+
+    for UNAME in "${!VPN_SEEN[@]}"; do
+        TIPO=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f1)
+        HORA=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f2-)
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$TIPO" "$HORA"
+        ((VPN_COUNT++))
+    done
+    [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN/SSH conectados${NC}"
+
+    echo ""
+
     [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN conectados${NC}"
 
     echo ""
