@@ -138,6 +138,35 @@ delete_ssh() {
 }
 
 # --------- VER USUARIOS ACTIVOS ---------------------------------------------------------------------------------------------------------------
+# Calcular tiempo transcurrido desde una hora de log
+calc_tiempo() {
+    local log_time="$1"  # formato: "Mar 26 02:21:00" o "2026-03-26 02:21"
+    local now_ts=$(date +%s)
+    local conn_ts=0
+
+    # Intentar parsear formato "Mar 26 02:21:00"
+    conn_ts=$(date -d "$log_time $(date +%Y)" +%s 2>/dev/null) || \
+    conn_ts=$(date -d "$log_time" +%s 2>/dev/null) || \
+    conn_ts=0
+
+    [[ $conn_ts -eq 0 ]] && echo "?" && return
+
+    local diff=$(( now_ts - conn_ts ))
+    [[ $diff -lt 0 ]] && diff=0
+
+    local h=$(( diff / 3600 ))
+    local m=$(( (diff % 3600) / 60 ))
+    local s=$(( diff % 60 ))
+
+    if [[ $h -gt 0 ]]; then
+        printf "%dh %02dm" $h $m
+    elif [[ $m -gt 0 ]]; then
+        printf "%dm %02ds" $m $s
+    else
+        printf "%ds" $s
+    fi
+}
+
 active_users() {
     echo ""
     echo -e "${CYAN}-----------------------------------------------------------${NC}"
@@ -163,7 +192,7 @@ active_users() {
 
     # Usuarios VPN via WebSocket + Dropbear + OpenSSH
     echo -e " ${YELLOW}[ USUARIOS VPN/SSH ACTIVOS ]${NC}"
-    printf " ${WHITE}%-20s %-12s %-20s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION"
+    printf " ${WHITE}%-20s %-12s %-18s %-10s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION" "TIEMPO"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     VPN_COUNT=0
     declare -A VPN_SEEN
@@ -206,7 +235,8 @@ active_users() {
     for UNAME in "${!VPN_SEEN[@]}"; do
         TIPO=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f1)
         HORA=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f2-)
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$TIPO" "$HORA"
+        TIEMPO=$(calc_tiempo "$HORA")
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" "$UNAME" "$TIPO" "$HORA" "$TIEMPO"
         ((VPN_COUNT++))
     done
     [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN/SSH conectados${NC}"
@@ -219,7 +249,7 @@ active_users() {
 
     # Usuarios UDP Custom activos
     echo -e " ${YELLOW}[ USUARIOS UDP ACTIVOS ]${NC}"
-    printf " ${WHITE}%-20s %-18s %-20s${NC}\n" "USUARIO" "IP" "HORA CONEXION"
+    printf " ${WHITE}%-20s %-18s %-18s %-10s${NC}\n" "USUARIO" "IP" "HORA CONEXION" "TIEMPO"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     UDP_COUNT=0
     declare -A UDP_SEEN
@@ -235,14 +265,16 @@ active_users() {
     done < <(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected")
     for UNAME in "${!UDP_SEEN[@]}"; do
         printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" \
-            "$UNAME" "${UDP_SEEN[$UNAME]}" "${UDP_HORA[$UNAME]}"
+            TIEMPO_UDP=$(calc_tiempo "${UDP_HORA[$UNAME]}")
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" \
+            "$UNAME" "${UDP_SEEN[$UNAME]}" "${UDP_HORA[$UNAME]}" "$TIEMPO_UDP"
         ((UDP_COUNT++))
     done
     [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP activos (ultimos 5 min)${NC}"
 
     # Usuarios Xray/VLESS activos
     echo -e " ${YELLOW}[ USUARIOS XRAY/VLESS ACTIVOS ]${NC}"
-    printf " ${WHITE}%-20s %-20s${NC}\n" "USUARIO" "HORA CONEXION"
+    printf " ${WHITE}%-20s %-18s %-10s${NC}\n" "USUARIO" "HORA CONEXION" "TIEMPO"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     XRAY_COUNT=0
     XRAY_LOG="/var/log/xray/access.log"
@@ -256,7 +288,8 @@ active_users() {
             XRAY_SEEN["$UNAME"]="$HORA"
         done < <(awk -v d="$SINCE" '$0 >= d' "$XRAY_LOG" | grep "email:")
         for UNAME in "${!XRAY_SEEN[@]}"; do
-            printf " ${GREEN}%-20s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "${XRAY_SEEN[$UNAME]}"
+            TIEMPO_XRAY=$(calc_tiempo "${XRAY_SEEN[$UNAME]}")
+            printf " ${GREEN}%-20s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" "$UNAME" "${XRAY_SEEN[$UNAME]}" "$TIEMPO_XRAY"
             ((XRAY_COUNT++))
         done
         [[ $XRAY_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios Xray activos (ultimos 30 min)${NC}"
