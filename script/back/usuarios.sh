@@ -192,18 +192,20 @@ active_users() {
     printf " ${WHITE}%-20s %-18s %-20s${NC}\n" "USUARIO" "IP" "HORA CONEXION"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     UDP_COUNT=0
-    UDP_LOG=$(journalctl -u udp-custom --no-pager -n 300 2>/dev/null)
+    declare -A UDP_SEEN
     while IFS= read -r conn; do
         UNAME=$(echo "$conn" | grep -oP "(?<=\[user:)[^\]]+")
         SRC=$(echo "$conn"   | grep -oP "(?<=\[src:)[^\]]+")
-        HORA=$(echo "$conn"  | awk '{print $1, $2, $3}')
         IP=$(echo "$SRC" | cut -d: -f1)
-        DISC=$(echo "$UDP_LOG" | grep "src:$SRC" | grep "disconnected")
-        [[ -n "$DISC" ]] && continue
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" "$UNAME" "$IP" "$HORA"
+        [[ -z "$UNAME" ]] && continue
+        UDP_SEEN["$UNAME"]="$IP"
+    done < <(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected")
+    for UNAME in "${!UDP_SEEN[@]}"; do
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%s${NC}\n" \
+            "$UNAME" "${UDP_SEEN[$UNAME]}" "ultimos 5 min"
         ((UDP_COUNT++))
-    done < <(echo "$UDP_LOG" | grep "Client connected")
-    [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP conectados${NC}"
+    done
+    [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP activos (ultimos 5 min)${NC}"
 
 
     # Usuarios Xray/VLESS activos
