@@ -253,6 +253,8 @@ SVC
 systemctl daemon-reload
 systemctl enable ssh-ws
 systemctl restart ssh-ws
+systemctl stop nginx
+systemctl disable nginx
 
 # Instalar y configurar fail2ban
 apt install fail2ban -y -q 2>/dev/null
