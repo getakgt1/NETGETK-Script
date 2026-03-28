@@ -171,6 +171,69 @@ grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 # Fix Dropbear: agregar /bin/false a shells validos
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
+# Configurar Dropbear en puerto 2222
+sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear
+sed -i 's/DROPBEAR_PORT=22/DROPBEAR_PORT=2222/' /etc/default/dropbear
+systemctl restart dropbear
+
+# Instalar proxy HTTP→SSH (puerto 80)
+cat > /usr/local/bin/ssh-ws.py << 'PYEOF'
+#!/usr/bin/env python3
+import socket, threading, select
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 80
+SSH_HOST = "127.0.0.1"
+SSH_PORT = 2222
+BUFFER = 4096
+RESPONSE = b"HTTP/1.1 200 OK\r\n\r\n"
+def tunnel(src, dst):
+    while True:
+        try:
+            r, _, _ = select.select([src, dst], [], [], 60)
+            if not r: break
+            for s in r:
+                data = s.recv(BUFFER)
+                if not data: return
+                (dst if s is src else src).sendall(data)
+        except: break
+    src.close(); dst.close()
+def handle(client):
+    try:
+        data = b""
+        while b"\r\n\r\n" not in data:
+            data += client.recv(BUFFER)
+        client.sendall(RESPONSE)
+        ssh = socket.create_connection((SSH_HOST, SSH_PORT))
+        threading.Thread(target=tunnel, args=(client, ssh), daemon=True).start()
+    except: client.close()
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((LISTEN_HOST, LISTEN_PORT))
+server.listen(100)
+print(f"Proxy HTTP→SSH corriendo en :{LISTEN_PORT}")
+while True:
+    client, _ = server.accept()
+    threading.Thread(target=handle, args=(client,), daemon=True).start()
+PYEOF
+chmod +x /usr/local/bin/ssh-ws.py
+
+# Crear servicio ssh-ws
+cat > /etc/systemd/system/ssh-ws.service << 'SVC'
+[Unit]
+Description=SSH WebSocket Proxy - GTKVPN
+After=network.target
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/ssh-ws.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+SVC
+systemctl daemon-reload
+systemctl enable ssh-ws
+systemctl restart ssh-ws
+
 # UFW básico
 ufw --force reset 2>/dev/null
 ufw default deny incoming 2>/dev/null
