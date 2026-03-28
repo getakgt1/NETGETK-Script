@@ -200,12 +200,14 @@ systemctl restart dropbear
 cat > /usr/local/bin/ssh-ws.py << 'PYEOF'
 #!/usr/bin/env python3
 import socket, threading, select
+
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 80
 SSH_HOST = "127.0.0.1"
 SSH_PORT = 2222
 BUFFER = 4096
-RESPONSE = b"HTTP/1.1 200 OK\r\n\r\n"
+RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+
 def tunnel(src, dst):
     while True:
         try:
@@ -217,23 +219,29 @@ def tunnel(src, dst):
                 (dst if s is src else src).sendall(data)
         except: break
     src.close(); dst.close()
+
 def handle(client):
     try:
-        data = b""
-        while b"\r\n\r\n" not in data:
-            data += client.recv(BUFFER)
+        client.recv(BUFFER)
         client.sendall(RESPONSE)
-        ssh = socket.create_connection((SSH_HOST, SSH_PORT))
+        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
+        ssh.setblocking(True)
         threading.Thread(target=tunnel, args=(client, ssh), daemon=True).start()
-    except: client.close()
+    except Exception as e:
+        print(f"Error: {e}")
+        client.close()
+
 server = socket.socket()
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind((LISTEN_HOST, LISTEN_PORT))
-server.listen(100)
-print(f"Proxy HTTP→SSH corriendo en :{LISTEN_PORT}")
+server.listen(200)
+print(f"Proxy HTTP->SSH corriendo en :{LISTEN_PORT}")
 while True:
-    client, _ = server.accept()
-    threading.Thread(target=handle, args=(client,), daemon=True).start()
+    try:
+        client, _ = server.accept()
+        client.settimeout(30)
+        threading.Thread(target=handle, args=(client,), daemon=True).start()
+    except: pass
 PYEOF
 chmod +x /usr/local/bin/ssh-ws.py
 
