@@ -234,6 +234,30 @@ systemctl daemon-reload
 systemctl enable ssh-ws
 systemctl restart ssh-ws
 
+# Instalar y configurar fail2ban
+apt install fail2ban -y -q 2>/dev/null
+cat > /etc/fail2ban/jail.local << 'EOF'
+[sshd]
+enabled = true
+port = 22,2222
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 5
+bantime = 3600
+findtime = 600
+
+[dropbear]
+enabled = true
+port = 2222
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 5
+bantime = 3600
+findtime = 600
+EOF
+systemctl enable fail2ban
+systemctl restart fail2ban
+
 # UFW básico
 ufw --force reset 2>/dev/null
 ufw default deny incoming 2>/dev/null
