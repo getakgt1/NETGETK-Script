@@ -12,10 +12,30 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
+# --- Validar Licencia ---
+LICENSE_SERVER="http://102.129.137.143:4000"
+VPS_IP=$(curl -s ifconfig.me)
+echo -e "${CYAN}[*] Ingresa tu KEY de licencia:${NC}"
+read -p "► KEY: " LICENSE_KEY
+if [[ -z "$LICENSE_KEY" ]]; then
+    echo -e "${RED}[!] KEY requerida${NC}"; exit 1
+fi
+echo -e "${CYAN}[*] Validando licencia...${NC}"
+RESPONSE=$(curl -s -X POST "$LICENSE_SERVER/api/validate" \
+    -H "Content-Type: application/json" \
+    -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}")
+STATUS=$(echo $RESPONSE | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+MESSAGE=$(echo $RESPONSE | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+OWNER=$(echo $RESPONSE | grep -o '"owner":"[^"]*"' | cut -d'"' -f4)
+if [[ "$STATUS" != "ok" ]]; then
+    echo -e "${RED}[!] Licencia inválida: $MESSAGE${NC}"; exit 1
+fi
+echo -e "${GREEN}[✓] Licencia válida - Propietario: $OWNER${NC}"
 # --- Verificar root ---
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}[!] Este script debe ejecutarse como root${NC}"
    exit 1
+fi
 fi
 
 # --- Verificar Ubuntu ---
