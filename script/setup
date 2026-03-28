@@ -242,7 +242,7 @@ enabled = true
 port = 22,2222
 filter = sshd
 logpath = /var/log/auth.log
-maxretry = 5
+maxretry = 10
 bantime = 3600
 findtime = 600
 
@@ -251,7 +251,7 @@ enabled = true
 port = 2222
 filter = sshd
 logpath = /var/log/auth.log
-maxretry = 5
+maxretry = 10
 bantime = 3600
 findtime = 600
 EOF
