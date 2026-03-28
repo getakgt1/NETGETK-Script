@@ -217,9 +217,9 @@ app.get('/api/users', requireAuth, (req, res) => {
                 // Detectar conexión: sesiones TTY (who) + procesos sshd del usuario
                 const whoCount  = parseInt(run(`who 2>/dev/null | grep -c "^${conf.USERNAME} "`) || '0');
                 const sshdCount = parseInt(run(`ps aux 2>/dev/null | grep "sshd: ${conf.USERNAME}" | grep -v grep | wc -l`) || '0');
-                conf.connected  = (whoCount + sshdCount) > 0;
-                conf.connCount  = whoCount + sshdCount;
-                conf.limitVal   = conf.LIMIT ? parseInt(conf.LIMIT) : 0;
+                const dropbearCount = parseInt(run(`ss -tnp 2>/dev/null | grep ":2222" | grep "dropbear" | wc -l`) || '0');
+                conf.connected  = (whoCount + sshdCount + dropbearCount) > 0;
+                conf.connCount  = whoCount + sshdCount + dropbearCount;
                 users.push(conf);
             }
         });
