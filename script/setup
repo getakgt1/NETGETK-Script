@@ -192,8 +192,8 @@ grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
 # Configurar Dropbear en puerto 2222
-sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear
-sed -i 's/DROPBEAR_PORT=22/DROPBEAR_PORT=2222/' /etc/default/dropbear
+sed -i "s/NO_START=.*/NO_START=0/" /etc/default/dropbear
+sed -i "s/DROPBEAR_PORT=.*/DROPBEAR_PORT=2222/" /etc/default/dropbear
 systemctl restart dropbear
 
 # Instalar proxy HTTP→SSH (puerto 80)
