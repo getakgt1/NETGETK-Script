@@ -125,7 +125,7 @@ SVC
     
     # Guardar config
     sed -i '/^UDP_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
-    echo "UDP_PORT=$UDP_PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^UDP_PORT=/d" $INSTALL_DIR/config.conf && echo "UDP_PORT=$UDP_PORT" >> $INSTALL_DIR/config.conf
     
     if systemctl is-active --quiet udp-custom; then
         echo -e "${GREEN}[+] UDP Custom activo en puerto $UDP_PORT${NC}"
@@ -188,7 +188,7 @@ SVC
     systemctl restart badvpn-udpgw
     
     sed -i '/^UDPGW_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
-    echo "UDPGW_PORT=$UDPGW_PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^UDPGW_PORT=/d" $INSTALL_DIR/config.conf && echo "UDPGW_PORT=$UDPGW_PORT" >> $INSTALL_DIR/config.conf
     
     if systemctl is-active --quiet badvpn-udpgw; then
         echo -e "${GREEN}[+] BadVPN-UDPgw activo en 127.0.0.1:$UDPGW_PORT${NC}"

@@ -145,8 +145,8 @@ XCONF
     # Guardar en config
     sed -i '/^XRAY_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
     sed -i '/^XRAY_WS_PATH=/d' $INSTALL_DIR/config.conf 2>/dev/null
-    echo "XRAY_PORT=$VLESS_PORT" >> $INSTALL_DIR/config.conf
-    echo "XRAY_WS_PATH=$WS_PATH" >> $INSTALL_DIR/config.conf
+    sed -i "/^XRAY_PORT=/d" $INSTALL_DIR/config.conf && echo "XRAY_PORT=$VLESS_PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^XRAY_WS_PATH=/d" $INSTALL_DIR/config.conf && echo "XRAY_WS_PATH=$WS_PATH" >> $INSTALL_DIR/config.conf
     
     systemctl enable xray 2>/dev/null
     systemctl restart xray
