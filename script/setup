@@ -36,7 +36,6 @@ EOF
 echo -e "${WHITE}        NETGETK VPN SCRIPT INSTALLER${NC}"
 echo -e "${YELLOW}        $(lsb_release -ds 2>/dev/null || echo "Linux") | $(uname -m)${NC}"
 echo ""
-
 echo -e "${GREEN}[*] Iniciando instalación...${NC}"
 sleep 1
 
