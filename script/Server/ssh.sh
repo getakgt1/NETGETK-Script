@@ -77,7 +77,7 @@ install_ssh_ws() {
     [[ -z "$WS_PORT" ]] && WS_PORT=80
     
     # Instalar python3-websockets si no está
-    python3 -c "import websockets" 2>/dev/null || pip3 install websockets -q
+    python3 -c "import websockets" 2>/dev/null || apt install -y -q python3-websockets
     
     SSH_PORT=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
     
