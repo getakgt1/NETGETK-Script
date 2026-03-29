@@ -12,30 +12,10 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
-# --- Validar Licencia ---
-LICENSE_SERVER="http://102.129.137.143:4000"
-VPS_IP=$(curl -s ifconfig.me)
-echo -e "${CYAN}[*] Ingresa tu KEY de licencia:${NC}"
-read -p "► KEY: " LICENSE_KEY
-if [[ -z "$LICENSE_KEY" ]]; then
-    echo -e "${RED}[!] KEY requerida${NC}"; exit 1
-fi
-echo -e "${CYAN}[*] Validando licencia...${NC}"
-RESPONSE=$(curl -s -X POST "$LICENSE_SERVER/api/validate" \
-    -H "Content-Type: application/json" \
-    -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}")
-STATUS=$(echo $RESPONSE | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-MESSAGE=$(echo $RESPONSE | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
-OWNER=$(echo $RESPONSE | grep -o '"owner":"[^"]*"' | cut -d'"' -f4)
-if [[ "$STATUS" != "ok" ]]; then
-    echo -e "${RED}[!] Licencia inválida: $MESSAGE${NC}"; exit 1
-fi
-echo -e "${GREEN}[✓] Licencia válida - Propietario: $OWNER${NC}"
 # --- Verificar root ---
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}[!] Este script debe ejecutarse como root${NC}"
    exit 1
-fi
 fi
 
 # --- Verificar Ubuntu ---
@@ -186,107 +166,6 @@ sed -i 's/#ClientAliveInterval.*/ClientAliveInterval 60/' /etc/ssh/sshd_config 2
 sed -i 's/#ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config 2>/dev/null
 grep -q "AllowTcpForwarding yes" /etc/ssh/sshd_config 2>/dev/null || echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
 systemctl restart ssh 2>/dev/null
-# Fix Dropbear: agregar /bin/false a shells validos
-grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
-# Fix Dropbear: agregar /bin/false a shells validos
-grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
-
-# Configurar Dropbear en puerto 2222
-sed -i "s/NO_START=.*/NO_START=0/" /etc/default/dropbear
-sed -i "s/DROPBEAR_PORT=.*/DROPBEAR_PORT=2222/" /etc/default/dropbear
-systemctl restart dropbear
-
-# Instalar proxy HTTP→SSH (puerto 80)
-cat > /usr/local/bin/ssh-ws.py << 'PYEOF'
-#!/usr/bin/env python3
-import socket, threading, select
-
-LISTEN_HOST = "0.0.0.0"
-LISTEN_PORT = 80
-SSH_HOST = "127.0.0.1"
-SSH_PORT = 2222
-BUFFER = 4096
-RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
-
-def tunnel(src, dst):
-    while True:
-        try:
-            r, _, _ = select.select([src, dst], [], [], 60)
-            if not r: break
-            for s in r:
-                data = s.recv(BUFFER)
-                if not data: return
-                (dst if s is src else src).sendall(data)
-        except: break
-    src.close(); dst.close()
-
-def handle(client):
-    try:
-        client.recv(BUFFER)
-        client.sendall(RESPONSE)
-        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
-        ssh.setblocking(True)
-        threading.Thread(target=tunnel, args=(client, ssh), daemon=True).start()
-    except Exception as e:
-        print(f"Error: {e}")
-        client.close()
-
-server = socket.socket()
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind((LISTEN_HOST, LISTEN_PORT))
-server.listen(200)
-print(f"Proxy HTTP->SSH corriendo en :{LISTEN_PORT}")
-while True:
-    try:
-        client, _ = server.accept()
-        client.settimeout(30)
-        threading.Thread(target=handle, args=(client,), daemon=True).start()
-    except: pass
-PYEOF
-chmod +x /usr/local/bin/ssh-ws.py
-
-# Crear servicio ssh-ws
-cat > /etc/systemd/system/ssh-ws.service << 'SVC'
-[Unit]
-Description=SSH WebSocket Proxy - GTKVPN
-After=network.target
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/ssh-ws.py
-Restart=always
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-SVC
-systemctl daemon-reload
-systemctl enable ssh-ws
-systemctl restart ssh-ws
-systemctl stop nginx
-systemctl disable nginx
-
-# Instalar y configurar fail2ban
-apt install fail2ban -y -q 2>/dev/null
-cat > /etc/fail2ban/jail.local << 'EOF'
-[sshd]
-enabled = true
-port = 22,2222
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 10
-bantime = 3600
-findtime = 600
-
-[dropbear]
-enabled = true
-port = 2222
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 10
-bantime = 3600
-findtime = 600
-EOF
-systemctl enable fail2ban
-systemctl restart fail2ban
 
 # UFW básico
 ufw --force reset 2>/dev/null
@@ -306,7 +185,7 @@ ufw --force enable 2>/dev/null
 echo -e "${CYAN}[7/7] Instalando panel web...${NC}"
 if [[ -f "$INSTALL_DIR/panel/server.js" ]]; then
     cd "$INSTALL_DIR/panel"
-    npm install express express-session cors bcryptjs jsonwebtoken uuid --save -q 2>/dev/null
+    npm install express cors bcryptjs jsonwebtoken uuid --save -q 2>/dev/null
     pm2 delete netgetk-panel 2>/dev/null
     pm2 start server.js --name netgetk-panel 2>/dev/null
     pm2 save 2>/dev/null
