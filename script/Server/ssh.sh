@@ -75,60 +75,68 @@ install_ssh_ws() {
     echo -e "${CYAN}[*] Instalando SSH WebSocket...${NC}"
     echo -ne " ${WHITE}Puerto para WebSocket SSH (ej. 80): ${NC}"; read WS_PORT
     [[ -z "$WS_PORT" ]] && WS_PORT=80
-    
-    # Instalar python3-websockets si no está
-    python3 -c "import websockets" 2>/dev/null || apt install -y -q python3-websockets
-    
-    SSH_PORT=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
-    
-    # Crear script de WebSocket SSH
+
+    # Detener nginx si está corriendo (liberar el puerto)
+    systemctl stop nginx 2>/dev/null
+    systemctl disable nginx 2>/dev/null
+
+    # Configurar Dropbear en puerto 2222
+    sed -i 's/#DROPBEAR_PORT=22/DROPBEAR_PORT=2222/' /etc/default/dropbear
+    sed -i 's/^DROPBEAR_PORT=.*/DROPBEAR_PORT=2222/' /etc/default/dropbear
+    # Generar llaves faltantes de Dropbear
+    [[ ! -f /etc/dropbear/dropbear_dss_host_key ]] && dropbearkey -t dss -f /etc/dropbear/dropbear_dss_host_key 2>/dev/null
+    [[ ! -f /etc/dropbear/dropbear_rsa_host_key ]] && dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key 2>/dev/null
+    systemctl restart dropbear 2>/dev/null
+
+    # Crear proxy HTTP->SSH simple (compatible con HTTP Custom/payload)
     cat > /usr/local/bin/ssh-ws.py << PYEOF
 #!/usr/bin/env python3
-"""SSH WebSocket Proxy - GTKVPN"""
-import asyncio
-import websockets
-import socket
-import sys
+import socket, threading, select
 
-SSH_HOST = "127.0.0.1"
-SSH_PORT = $SSH_PORT
-WS_PORT  = $WS_PORT
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = $WS_PORT
+SSH_HOST    = "127.0.0.1"
+SSH_PORT    = 2222
+BUFFER      = 4096
+RESPONSE    = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
 
-async def forward(ws, reader, writer):
-    async def ws_to_ssh():
+def tunnel(src, dst):
+    while True:
         try:
-            async for data in ws:
-                writer.write(data if isinstance(data, bytes) else data.encode())
-                await writer.drain()
-        except: pass
-        finally: writer.close()
+            r, _, _ = select.select([src, dst], [], [], 60)
+            if not r: break
+            for s in r:
+                data = s.recv(BUFFER)
+                if not data: return
+                (dst if s is src else src).sendall(data)
+        except: break
+    src.close(); dst.close()
 
-    async def ssh_to_ws():
-        try:
-            while True:
-                data = await reader.read(4096)
-                if not data: break
-                await ws.send(data)
-        except: pass
+def handle(client):
+    try:
+        client.recv(BUFFER)
+        client.sendall(RESPONSE)
+        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
+        ssh.setblocking(True)
+        threading.Thread(target=tunnel, args=(client, ssh), daemon=True).start()
+    except Exception as e:
+        print(f"Error: {e}")
+        client.close()
 
-    await asyncio.gather(ws_to_ssh(), ssh_to_ws())
-
-async def handler(ws, path):
-    # Responder handshake HTTP personalizado
-    reader, writer = await asyncio.open_connection(SSH_HOST, SSH_PORT)
-    await forward(ws, reader, writer)
-
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", WS_PORT,
-                                 subprotocols=["binary"],
-                                 ping_interval=None):
-        print(f"SSH WebSocket corriendo en :{WS_PORT} → SSH :{SSH_PORT}")
-        await asyncio.Future()
-
-asyncio.run(main())
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((LISTEN_HOST, LISTEN_PORT))
+server.listen(200)
+print(f"Proxy HTTP->SSH corriendo en :{LISTEN_PORT}")
+while True:
+    try:
+        client, _ = server.accept()
+        client.settimeout(30)
+        threading.Thread(target=handle, args=(client,), daemon=True).start()
+    except: pass
 PYEOF
     chmod +x /usr/local/bin/ssh-ws.py
-    
+
     # Crear servicio systemd
     cat > /etc/systemd/system/ssh-ws.service << SVC
 [Unit]
@@ -144,23 +152,23 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 SVC
-    
+
     systemctl daemon-reload
     systemctl enable ssh-ws 2>/dev/null
     systemctl restart ssh-ws
-    
+
     # Abrir puerto en UFW
     ufw allow "$WS_PORT/tcp" 2>/dev/null
-    
-    # Guardar en config
+
+    # Guardar en config (sin duplicados)
     sed -i "/^SSH_WS_PORT=/d" $INSTALL_DIR/config.conf && echo "SSH_WS_PORT=$WS_PORT" >> $INSTALL_DIR/config.conf
-    
+
     if systemctl is-active --quiet ssh-ws; then
         echo -e "${GREEN}[+] SSH WebSocket activo en puerto $WS_PORT${NC}"
     else
         echo -e "${RED}[!] Error iniciando SSH WebSocket${NC}"
     fi
-    
+
     press_enter
     menu_ssh
 }
