@@ -90,7 +90,7 @@ NGINX
     nginx -t 2>/dev/null && systemctl restart nginx
     ufw allow "$NGINX_PORT/tcp" 2>/dev/null
     
-    echo "NGINX_PORT=$NGINX_PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^NGINX_PORT=/d" $INSTALL_DIR/config.conf && echo "NGINX_PORT=$NGINX_PORT" >> $INSTALL_DIR/config.conf
     
     if systemctl is-active --quiet nginx; then
         echo -e "${GREEN}[+] Nginx activo en puerto $NGINX_PORT${NC}"
@@ -112,7 +112,7 @@ install_letsencrypt() {
     
     if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
         echo -e "${GREEN}[+] SSL Let's Encrypt instalado para $DOMAIN${NC}"
-        echo "SSL_DOMAIN=$DOMAIN" >> $INSTALL_DIR/config.conf
+        sed -i "/^SSL_DOMAIN=/d" $INSTALL_DIR/config.conf && echo "SSL_DOMAIN=$DOMAIN" >> $INSTALL_DIR/config.conf
     else
         echo -e "${RED}[!] Error obteniendo certificado. Verifica que el dominio apunte a este servidor.${NC}"
     fi

@@ -150,8 +150,8 @@ PYEOF
     # Guardar config
     sed -i '/^SOCKS_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
     sed -i '/^SOCKS_ENABLED=/d' $INSTALL_DIR/config.conf 2>/dev/null
-    echo "SOCKS_PORT=$PORT" >> $INSTALL_DIR/config.conf
-    echo "SOCKS_ENABLED=true" >> $INSTALL_DIR/config.conf
+    sed -i "/^SOCKS_PORT=/d" $INSTALL_DIR/config.conf && echo "SOCKS_PORT=$PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^SOCKS_ENABLED=/d" $INSTALL_DIR/config.conf && echo "SOCKS_ENABLED=true" >> $INSTALL_DIR/config.conf
     
     ufw allow "$PORT/tcp" 2>/dev/null
     systemctl enable socks5-gtkvpn 2>/dev/null
@@ -261,8 +261,8 @@ PYEOF
     create_socks_service "$PORT"
     
     sed -i '/^SOCKS_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
-    echo "SOCKS_PORT=$PORT" >> $INSTALL_DIR/config.conf
-    echo "SOCKS_ENABLED=true" >> $INSTALL_DIR/config.conf
+    sed -i "/^SOCKS_PORT=/d" $INSTALL_DIR/config.conf && echo "SOCKS_PORT=$PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^SOCKS_ENABLED=/d" $INSTALL_DIR/config.conf && echo "SOCKS_ENABLED=true" >> $INSTALL_DIR/config.conf
     
     ufw allow "$PORT/tcp" 2>/dev/null
     systemctl enable socks5-gtkvpn 2>/dev/null
