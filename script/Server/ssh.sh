@@ -153,7 +153,7 @@ SVC
     ufw allow "$WS_PORT/tcp" 2>/dev/null
     
     # Guardar en config
-    echo "SSH_WS_PORT=$WS_PORT" >> $INSTALL_DIR/config.conf
+    sed -i "/^SSH_WS_PORT=/d" $INSTALL_DIR/config.conf && echo "SSH_WS_PORT=$WS_PORT" >> $INSTALL_DIR/config.conf
     
     if systemctl is-active --quiet ssh-ws; then
         echo -e "${GREEN}[+] SSH WebSocket activo en puerto $WS_PORT${NC}"
