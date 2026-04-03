@@ -91,49 +91,126 @@ install_ssh_ws() {
     # Crear proxy HTTP->SSH simple (compatible con HTTP Custom/payload)
     cat > /usr/local/bin/ssh-ws.py << PYEOF
 #!/usr/bin/env python3
-import socket, threading, select
+import socket, threading, hashlib, base64, re, select
 
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = $WS_PORT
 SSH_HOST    = "127.0.0.1"
 SSH_PORT    = 2222
-BUFFER      = 4096
-RESPONSE    = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+BUFFER      = 32768
+MAX_TUNNELS = 50
 
-def tunnel(src, dst):
+tunnel_sem = threading.Semaphore(MAX_TUNNELS)
+
+def relay(src, dst):
+    src.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    dst.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    src.settimeout(300)
+    dst.settimeout(300)
+    try:
+        while True:
+            r, _, _ = select.select([src, dst], [], [], 300)
+            if not r:
+                break
+            for s in r:
+                try:
+                    data = s.recv(BUFFER)
+                    if not data:
+                        return
+                    other = dst if s is src else src
+                    other.sendall(data)
+                except:
+                    return
+    except:
+        pass
+    finally:
+        try: src.close()
+        except: pass
+        try: dst.close()
+        except: pass
+
+def open_tunnel(client, addr):
+    if not tunnel_sem.acquire(blocking=False):
+        client.close()
+        return
+    try:
+        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
+        t = threading.Thread(target=relay, args=(client, ssh), daemon=True)
+        t.start()
+        t.join()
+    except Exception as e:
+        print(f"[{addr}] tunnel: {e}", flush=True)
+    finally:
+        tunnel_sem.release()
+        try: client.close()
+        except: pass
+
+def handle(client, addr):
+    try:
+        client.settimeout(5)
+        data = b""
+        try:
+            data = client.recv(BUFFER)
+        except:
+            client.close()
+            return
+        client.settimeout(None)
+        if not data:
+            client.close()
+            return
+        first_line = data.split(b"\r\n")[0].decode(errors="ignore")
+        if first_line.startswith("PUT "):
+            client.sendall(b"HTTP/1.1 530 \r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+            try:
+                client.settimeout(3)
+                client.recv(BUFFER)
+            except: pass
+            client.settimeout(None)
+            client.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+            open_tunnel(client, addr)
+            return
+        get_idx = data.rfind(b"GET ")
+        if get_idx >= 0 and b"websocket" in data[get_idx:].lower() and b"Upgrade" in data[get_idx:]:
+            km = re.search(rb"Sec-WebSocket-Key:\s*([^\r\n]+)", data[get_idx:])
+            if km:
+                key = km.group(1).strip()
+                accept = base64.b64encode(hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()).decode()
+                resp = "HTTP/1.1 101 Web Socket Protocol\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"
+            else:
+                resp = "HTTP/1.1 101 Web Socket Protocol\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            client.sendall(resp.encode())
+            open_tunnel(client, addr)
+            return
+        if first_line.startswith("HTTP/2.0 200") or first_line.startswith("HTTP/1.1 200"):
+            client.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+            open_tunnel(client, addr)
+            return
+        if first_line.startswith("CONNECT "):
+            client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            open_tunnel(client, addr)
+            return
+        client.close()
+    except Exception as e:
+        print(f"[{addr}] {e}", flush=True)
+        try: client.close()
+        except: pass
+
+def main():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    srv.bind((LISTEN_HOST, LISTEN_PORT))
+    srv.listen(256)
+    print(f"[ssh-ws] Proxy :{LISTEN_PORT} -> SSH {SSH_HOST}:{SSH_PORT} (max={MAX_TUNNELS})", flush=True)
     while True:
         try:
-            r, _, _ = select.select([src, dst], [], [], 60)
-            if not r: break
-            for s in r:
-                data = s.recv(BUFFER)
-                if not data: return
-                (dst if s is src else src).sendall(data)
-        except: break
-    src.close(); dst.close()
+            c, a = srv.accept()
+            threading.Thread(target=handle, args=(c, a), daemon=True).start()
+        except Exception as e:
+            print(f"[accept] {e}", flush=True)
 
-def handle(client):
-    try:
-        client.recv(BUFFER)
-        client.sendall(RESPONSE)
-        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
-        ssh.setblocking(True)
-        threading.Thread(target=tunnel, args=(client, ssh), daemon=True).start()
-    except Exception as e:
-        print(f"Error: {e}")
-        client.close()
-
-server = socket.socket()
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind((LISTEN_HOST, LISTEN_PORT))
-server.listen(200)
-print(f"Proxy HTTP->SSH corriendo en :{LISTEN_PORT}")
-while True:
-    try:
-        client, _ = server.accept()
-        client.settimeout(30)
-        threading.Thread(target=handle, args=(client,), daemon=True).start()
-    except: pass
+if __name__ == "__main__":
+    main()
 PYEOF
     chmod +x /usr/local/bin/ssh-ws.py
 
