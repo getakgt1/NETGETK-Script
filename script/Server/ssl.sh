@@ -130,6 +130,13 @@ install_stunnel() {
     echo ""
     echo -e "${CYAN}[*] Instalando Stunnel (SSH sobre SSL/443)...${NC}"
 
+    # Verificar que pdirect.py esté corriendo (requiere SSH instalado primero)
+    if ! systemctl is-active --quiet ssh-ws; then
+        echo -e "${RED}[!] El proxy SSH (ssh-ws) no está activo.${NC}"
+        echo -e "${YELLOW}[!] Instala primero el módulo SSH desde el menú principal.${NC}"
+        press_enter; menu_ssl; return
+    fi
+
     apt install -y stunnel4 2>/dev/null
     if ! command -v stunnel4 &>/dev/null; then
         echo -e "${RED}[!] Error instalando stunnel4${NC}"
