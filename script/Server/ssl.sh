@@ -21,8 +21,10 @@ menu_ssl() {
 
     NGINX_ST=$(systemctl is-active --quiet nginx 2>/dev/null && \
         echo -e "${GREEN}[ACTIVO]${NC}" || echo -e "${RED}[INACTIVO]${NC}")
-    SSL_ST=$([[ -f /etc/letsencrypt/live/*/fullchain.pem ]] 2>/dev/null && \
-        echo -e "${GREEN}[CERT OK]${NC}" || echo -e "${YELLOW}[SIN CERT]${NC}")
+    SSL_ST=$(systemctl is-active --quiet stunnel4 2>/dev/null && \
+        echo -e "${GREEN}[ACTIVO]${NC}" || \
+        ([[ -f /etc/letsencrypt/live/*/fullchain.pem ]] 2>/dev/null && \
+        echo -e "${GREEN}[CERT OK]${NC}" || echo -e "${YELLOW}[SIN CERT]${NC}"))
     STUNNEL_ST=$(systemctl is-active --quiet stunnel4 2>/dev/null && \
         echo -e "${GREEN}[ACTIVO]${NC}" || echo -e "${RED}[INACTIVO]${NC}")
 
