@@ -175,7 +175,8 @@ STUNNELCONF
     systemctl enable stunnel4 2>/dev/null
     systemctl restart stunnel4
 
-    sed -i '/^STUNNEL_PORT=/d' /etc/gtkvpn/config.conf
+    sed -i "/^STUNNEL_PORT=/d" $INSTALL_DIR/config.conf
+    sed -i "/^SSL_PORT=/d" $INSTALL_DIR/config.conf
     echo "STUNNEL_PORT=$SSL_PORT" >> /etc/gtkvpn/config.conf
 
     sleep 1
