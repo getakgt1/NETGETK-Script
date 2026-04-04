@@ -1,8 +1,19 @@
 #!/usr/bin/python3
 import socket, threading, sys, select
 
+import os
 REMOTE_ADDR = "127.0.0.1"
-REMOTE_PORT = 22
+# Leer puerto SSH desde config del panel, default 22
+def get_ssh_port():
+    try:
+        with open("/etc/gtkvpn/config.conf") as f:
+            for line in f:
+                if line.startswith("SSH_PORT="):
+                    return int(line.strip().split("=")[1])
+    except:
+        pass
+    return 22
+REMOTE_PORT = get_ssh_port()
 BUFFER_SIZE = 65536
 HTTP_METHODS = [b"GET ", b"POST ", b"PUT ", b"CONNECT ", b"HTTP", b"OPTI", b"HEAD"]
 
