@@ -75,7 +75,7 @@ menu_protocolos() {
     # Estado de cada protocolo
     SSH_ST=$(systemctl is-active --quiet ssh 2>/dev/null && st_on || st_off)
     NGINX_ST=$(systemctl is-active --quiet nginx 2>/dev/null && st_on || st_off)
-    SSL_ST=$([[ -f /etc/letsencrypt/live/*/fullchain.pem ]] 2>/dev/null && st_on || st_off)
+    SSL_ST=$(systemctl is-active --quiet stunnel4 2>/dev/null && st_on || st_off)
     XRAY_ST=$(systemctl is-active --quiet xray 2>/dev/null && st_on || st_off)
     SOCKS_ST=$([[ -f /etc/gtkvpn/config.conf ]] && grep -q "SOCKS_ENABLED=true" /etc/gtkvpn/config.conf 2>/dev/null && st_on || st_off)
     SLOWDNS_ST=$(systemctl is-active --quiet slowdns 2>/dev/null && st_on || st_off)
