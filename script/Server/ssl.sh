@@ -148,7 +148,7 @@ install_stunnel() {
 
     WS_PORT=$(grep "^SSH_WS_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "80")
     VPS_IP=$(grep "^VPS_IP=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || curl -s ifconfig.me)
-    echo -e " ${WHITE}Flujo:${NC} ${CYAN}SSL:$SSL_PORT → ssh-ws.py:$WS_PORT → SSH:22${NC}"
+    echo -e " ${WHITE}Flujo:${NC} ${CYAN}SSL:$SSL_PORT → pdirect:$WS_PORT → SSH:22${NC}"
 
     echo -e "${CYAN}[*] Generando certificado autofirmado...${NC}"
     openssl req -new -x509 -days 3650 -nodes \
