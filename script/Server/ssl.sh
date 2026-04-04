@@ -139,8 +139,9 @@ install_stunnel() {
     echo -ne " ${WHITE}Puerto SSL para stunnel (default 443): ${NC}"; read SSL_PORT
     [[ -z "$SSL_PORT" ]] && SSL_PORT=443
 
-    SSH_PORT_DEST=$(grep "^SSH_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "22")
+    WS_PORT=$(grep "^SSH_WS_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "80")
     VPS_IP=$(grep "^VPS_IP=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || curl -s ifconfig.me)
+    echo -e " ${WHITE}Flujo:${NC} ${CYAN}SSL:$SSL_PORT → ssh-ws.py:$WS_PORT → SSH:22${NC}"
 
     echo -e "${CYAN}[*] Generando certificado autofirmado...${NC}"
     openssl req -new -x509 -days 3650 -nodes \
@@ -155,7 +156,7 @@ output = /var/log/stunnel4/stunnel.log
 
 [ssh-ssl]
 accept  = $SSL_PORT
-connect = 127.0.0.1:$SSH_PORT_DEST
+connect = 127.0.0.1:$WS_PORT
 cert    = /etc/stunnel/stunnel.pem
 STUNNELCONF
 
