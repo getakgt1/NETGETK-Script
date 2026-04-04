@@ -89,130 +89,131 @@ install_ssh_ws() {
     systemctl restart dropbear 2>/dev/null
 
     # Crear proxy HTTP->SSH simple (compatible con HTTP Custom/payload)
-    cat > /usr/local/bin/ssh-ws.py << PYEOF
-#!/usr/bin/env python3
-import socket, threading, hashlib, base64, re, select
+    # Instalar pdirect.py — proxy HTTP+SSL para SSH
+    cat > /usr/local/bin/pdirect.py << 'PDEOF'
+#!/usr/bin/python3
+import socket, threading, sys, select
 
-LISTEN_HOST = "0.0.0.0"
-LISTEN_PORT = $WS_PORT
-SSH_HOST    = "127.0.0.1"
-SSH_PORT    = 2222
-BUFFER      = 32768
-MAX_TUNNELS = 50
+REMOTE_ADDR = "127.0.0.1"
+BUFFER_SIZE = 65536
+HTTP_METHODS = [b"GET ", b"POST ", b"PUT ", b"CONNECT ", b"HTTP", b"OPTI", b"HEAD"]
 
-tunnel_sem = threading.Semaphore(MAX_TUNNELS)
+def get_ssh_port():
+    try:
+        with open("/etc/gtkvpn/config.conf") as f:
+            for line in f:
+                if line.startswith("SSH_PORT="):
+                    return int(line.strip().split("=")[1])
+    except:
+        pass
+    for port in [2222, 22]:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=1)
+            s.close()
+            return port
+        except:
+            pass
+    return 22
 
-def relay(src, dst):
-    src.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    dst.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    src.settimeout(300)
-    dst.settimeout(300)
+REMOTE_PORT = get_ssh_port()
+
+def is_http(data):
+    return any(data.startswith(m) for m in HTTP_METHODS)
+
+def read_payload(sock):
+    data = b""
+    sock.settimeout(5)
     try:
         while True:
-            r, _, _ = select.select([src, dst], [], [], 300)
-            if not r:
+            chunk = sock.recv(BUFFER_SIZE)
+            if not chunk:
+                break
+            data += chunk
+            if b"\r\n\r\n" in data or b"\n\n" in data:
+                break
+            if len(data) >= 4 and not is_http(data):
+                break
+    except:
+        pass
+    sock.settimeout(None)
+    return data
+
+def handler(client_socket, address):
+    remote = None
+    try:
+        data = read_payload(client_socket)
+        if not data:
+            client_socket.close()
+            return
+        remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        remote.connect((REMOTE_ADDR, REMOTE_PORT))
+        remote.settimeout(300)
+        client_socket.settimeout(300)
+        if is_http(data):
+            client_ssh_banner = None
+            if b"SSH-2.0-" in data:
+                idx = data.find(b"SSH-2.0-")
+                client_ssh_banner = data[idx:]
+                eol = client_ssh_banner.find(b"\n")
+                if eol >= 0:
+                    client_ssh_banner = client_ssh_banner[:eol+1]
+            remote.settimeout(5)
+            server_banner = b""
+            try:
+                server_banner = remote.recv(BUFFER_SIZE)
+            except:
+                pass
+            remote.settimeout(300)
+            client_socket.sendall(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            )
+            if server_banner:
+                client_socket.sendall(server_banner)
+            if client_ssh_banner:
+                remote.sendall(client_ssh_banner)
+        else:
+            remote.sendall(data)
+        sockets = [client_socket, remote]
+        while True:
+            r, _, e = select.select(sockets, [], sockets, 300)
+            if e or not r:
                 break
             for s in r:
                 try:
-                    data = s.recv(BUFFER)
-                    if not data:
+                    d = s.recv(BUFFER_SIZE)
+                    if not d:
                         return
-                    other = dst if s is src else src
-                    other.sendall(data)
+                    other = remote if s is client_socket else client_socket
+                    other.sendall(d)
                 except:
                     return
     except:
         pass
     finally:
-        try: src.close()
+        try: client_socket.close()
         except: pass
-        try: dst.close()
-        except: pass
-
-def open_tunnel(client, addr):
-    if not tunnel_sem.acquire(blocking=False):
-        client.close()
-        return
-    try:
-        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=10)
-        t = threading.Thread(target=relay, args=(client, ssh), daemon=True)
-        t.start()
-        t.join()
-    except Exception as e:
-        print(f"[{addr}] tunnel: {e}", flush=True)
-    finally:
-        tunnel_sem.release()
-        try: client.close()
-        except: pass
-
-def handle(client, addr):
-    try:
-        client.settimeout(5)
-        data = b""
         try:
-            data = client.recv(BUFFER)
-        except:
-            client.close()
-            return
-        client.settimeout(None)
-        if not data:
-            client.close()
-            return
-        first_line = data.split(b"\r\n")[0].decode(errors="ignore")
-        if first_line.startswith("PUT "):
-            client.sendall(b"HTTP/1.1 530 \r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
-            try:
-                client.settimeout(3)
-                client.recv(BUFFER)
-            except: pass
-            client.settimeout(None)
-            client.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
-            open_tunnel(client, addr)
-            return
-        get_idx = data.rfind(b"GET ")
-        if get_idx >= 0 and b"websocket" in data[get_idx:].lower() and b"Upgrade" in data[get_idx:]:
-            km = re.search(rb"Sec-WebSocket-Key:\s*([^\r\n]+)", data[get_idx:])
-            if km:
-                key = km.group(1).strip()
-                accept = base64.b64encode(hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()).decode()
-                resp = "HTTP/1.1 101 Web Socket Protocol\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"
-            else:
-                resp = "HTTP/1.1 101 Web Socket Protocol\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
-            client.sendall(resp.encode())
-            open_tunnel(client, addr)
-            return
-        if first_line.startswith("HTTP/2.0 200") or first_line.startswith("HTTP/1.1 200"):
-            client.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
-            open_tunnel(client, addr)
-            return
-        if first_line.startswith("CONNECT "):
-            client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
-            open_tunnel(client, addr)
-            return
-        client.close()
-    except Exception as e:
-        print(f"[{addr}] {e}", flush=True)
-        try: client.close()
+            if remote: remote.close()
         except: pass
 
-def main():
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-    srv.bind((LISTEN_HOST, LISTEN_PORT))
-    srv.listen(256)
-    print(f"[ssh-ws] Proxy :{LISTEN_PORT} -> SSH {SSH_HOST}:{SSH_PORT} (max={MAX_TUNNELS})", flush=True)
+def main(port):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    server.bind(("0.0.0.0", int(port)))
+    server.listen(256)
+    print(f"[pdirect] :{port} -> SSH {REMOTE_ADDR}:{REMOTE_PORT}", flush=True)
     while True:
         try:
-            c, a = srv.accept()
-            threading.Thread(target=handle, args=(c, a), daemon=True).start()
+            c, a = server.accept()
+            threading.Thread(target=handler, args=(c, a), daemon=True).start()
         except Exception as e:
-            print(f"[accept] {e}", flush=True)
+            print(f"[error] {e}", flush=True)
 
 if __name__ == "__main__":
-    main()
-PYEOF
-    chmod +x /usr/local/bin/ssh-ws.py
+    main(sys.argv[1] if len(sys.argv) > 1 else 80)
+PDEOF
+    chmod +x /usr/local/bin/pdirect.py
 
     # Crear servicio systemd
     cat > /etc/systemd/system/ssh-ws.service << SVC
