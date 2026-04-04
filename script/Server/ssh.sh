@@ -222,7 +222,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/ssh-ws.py
+ExecStart=/usr/bin/python3 /usr/local/bin/pdirect.py $WS_PORT
 Restart=always
 RestartSec=5
 
