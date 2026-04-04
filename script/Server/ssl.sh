@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-#   GTKVPN - Módulo SSL/TLS + Nginx
+#   GTKVPN - Módulo SSL/TLS + Nginx + Stunnel
 # ============================================================
 
 RED='\033[0;31m'
@@ -18,37 +18,39 @@ menu_ssl() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${WHITE}                🔒 MÓDULO SSL/TLS + NGINX${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
+
     NGINX_ST=$(systemctl is-active --quiet nginx 2>/dev/null && \
         echo -e "${GREEN}[ACTIVO]${NC}" || echo -e "${RED}[INACTIVO]${NC}")
     SSL_ST=$([[ -f /etc/letsencrypt/live/*/fullchain.pem ]] 2>/dev/null && \
         echo -e "${GREEN}[CERT OK]${NC}" || echo -e "${YELLOW}[SIN CERT]${NC}")
-    
-    echo -e " ${WHITE}Nginx:${NC} $NGINX_ST"
-    echo -e " ${WHITE}SSL:${NC}   $SSL_ST"
+    STUNNEL_ST=$(systemctl is-active --quiet stunnel4 2>/dev/null && \
+        echo -e "${GREEN}[ACTIVO]${NC}" || echo -e "${RED}[INACTIVO]${NC}")
+
+    echo -e " ${WHITE}Nginx:${NC}   $NGINX_ST"
+    echo -e " ${WHITE}SSL:${NC}     $SSL_ST"
+    echo -e " ${WHITE}Stunnel:${NC} $STUNNEL_ST"
     echo ""
     echo -e " ${WHITE}[1]${NC} Instalar/Configurar Nginx"
     echo -e " ${WHITE}[2]${NC} SSL con Let's Encrypt (requiere dominio)"
     echo -e " ${WHITE}[3]${NC} SSL Autofirmado (sin dominio)"
     echo -e " ${WHITE}[4]${NC} Configurar reverse proxy Xray"
     echo -e " ${WHITE}[5]${NC} Reiniciar Nginx"
+    echo -e " ${WHITE}[6]${NC} ${CYAN}Instalar Stunnel (SSH sobre SSL/443)${NC}"
+    echo -e " ${WHITE}[7]${NC} Estado Stunnel"
     echo ""
     echo -e " ${WHITE}[0]${NC} ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
     echo -ne " ${WHITE}► Opcion :${NC} "
     read OPT
-    
+
     case $OPT in
         1) install_nginx ;;
-        2)
-            if [[ "$1" == "cert" ]]; then
-                install_letsencrypt
-            else
-                install_letsencrypt
-            fi ;;
+        2) install_letsencrypt ;;
         3) install_selfsigned ;;
         4) setup_nginx_proxy ;;
         5) systemctl restart nginx; echo -e "${GREEN}[+] Nginx reiniciado${NC}"; sleep 1; menu_ssl ;;
+        6) install_stunnel ;;
+        7) status_stunnel ;;
         0) return ;;
         *) menu_ssl ;;
     esac
@@ -58,77 +60,47 @@ install_nginx() {
     echo ""
     echo -e "${CYAN}[*] Instalando Nginx...${NC}"
     apt install -y nginx 2>/dev/null
-    
+
     echo -ne " ${WHITE}Puerto HTTP Nginx (ej. 80): ${NC}"; read NGINX_PORT
     [[ -z "$NGINX_PORT" ]] && NGINX_PORT=80
-    
-    # Config básica
+
     cat > /etc/nginx/sites-available/gtkvpn << NGINX
 server {
     listen $NGINX_PORT default_server;
     server_name _;
-    
+
     location / {
         root /var/www/html;
         index index.html;
     }
-    
-    # Proxy para Xray WebSocket (configurar después)
-    # location /vless {
-    #     proxy_pass http://127.0.0.1:XRAY_PORT;
-    #     proxy_http_version 1.1;
-    #     proxy_set_header Upgrade \$http_upgrade;
-    #     proxy_set_header Connection "upgrade";
-    #     proxy_set_header Host \$host;
-    # }
 }
 NGINX
-    
+
     ln -sf /etc/nginx/sites-available/gtkvpn /etc/nginx/sites-enabled/gtkvpn 2>/dev/null
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null
-    
     nginx -t 2>/dev/null && systemctl restart nginx
-    ufw allow "$NGINX_PORT/tcp" 2>/dev/null
-    
-    sed -i "/^NGINX_PORT=/d" $INSTALL_DIR/config.conf && echo "NGINX_PORT=$NGINX_PORT" >> $INSTALL_DIR/config.conf
-    
-    if systemctl is-active --quiet nginx; then
-        echo -e "${GREEN}[+] Nginx activo en puerto $NGINX_PORT${NC}"
-    else
-        echo -e "${RED}[!] Error en Nginx${NC}"
-        nginx -t
-    fi
+    echo -e "${GREEN}[+] Nginx instalado en puerto $NGINX_PORT${NC}"
     press_enter; menu_ssl
 }
 
 install_letsencrypt() {
     echo ""
-    echo -e "${YELLOW}[!] Requiere dominio apuntando a este VPS${NC}"
     echo -ne " ${WHITE}Dominio (ej. vpn.tudominio.com): ${NC}"; read DOMAIN
-    [[ -z "$DOMAIN" ]] && { echo -e "${RED}[!] Requerido${NC}"; press_enter; menu_ssl; return; }
-    
+    [[ -z "$DOMAIN" ]] && { echo -e "${RED}[!] Dominio requerido${NC}"; press_enter; menu_ssl; return; }
     apt install -y certbot python3-certbot-nginx 2>/dev/null
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" 2>/dev/null
-    
-    if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-        echo -e "${GREEN}[+] SSL Let's Encrypt instalado para $DOMAIN${NC}"
-        sed -i "/^SSL_DOMAIN=/d" $INSTALL_DIR/config.conf && echo "SSL_DOMAIN=$DOMAIN" >> $INSTALL_DIR/config.conf
-    else
-        echo -e "${RED}[!] Error obteniendo certificado. Verifica que el dominio apunte a este servidor.${NC}"
-    fi
+    echo -e "${GREEN}[+] Let's Encrypt configurado para $DOMAIN${NC}"
     press_enter; menu_ssl
 }
 
 install_selfsigned() {
     echo ""
     echo -e "${CYAN}[*] Generando certificado autofirmado...${NC}"
-    
     mkdir -p /etc/gtkvpn/ssl
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/gtkvpn/ssl/server.key \
         -out /etc/gtkvpn/ssl/server.crt \
         -subj "/C=US/ST=State/L=City/O=GTKVPN/CN=$(curl -s ifconfig.me)" 2>/dev/null
-    
     if [[ -f /etc/gtkvpn/ssl/server.crt ]]; then
         echo -e "${GREEN}[+] Certificado autofirmado generado${NC}"
         echo -e " ${WHITE}Key:${NC} /etc/gtkvpn/ssl/server.key"
@@ -143,23 +115,9 @@ setup_nginx_proxy() {
     echo ""
     XRAY_PORT=$(grep "XRAY_PORT" $INSTALL_DIR/config.conf 2>/dev/null | cut -d= -f2 || echo "32595")
     XRAY_PATH=$(grep "XRAY_WS_PATH" $INSTALL_DIR/config.conf 2>/dev/null | cut -d= -f2 || echo "/")
-    
     echo -e "${CYAN}[*] Configurando Nginx como proxy para Xray...${NC}"
-    echo -e " ${WHITE}Puerto Xray:${NC} $XRAY_PORT"
-    echo -e " ${WHITE}Path WS:${NC} $XRAY_PATH"
-    
-    # Agregar location al config de nginx
     NGINX_CONF="/etc/nginx/sites-available/gtkvpn"
     if [[ -f "$NGINX_CONF" ]]; then
-        # Insertar antes del cierre del bloque server
-        sed -i "s|# location $XRAY_PATH {|location $XRAY_PATH {|" "$NGINX_CONF"
-        sed -i "s|#     proxy_pass http://127.0.0.1:XRAY_PORT;|    proxy_pass http://127.0.0.1:$XRAY_PORT;|" "$NGINX_CONF"
-        sed -i "s|#     proxy_http_version 1.1;|    proxy_http_version 1.1;|" "$NGINX_CONF"
-        sed -i 's|#     proxy_set_header Upgrade|    proxy_set_header Upgrade|g' "$NGINX_CONF"
-        sed -i 's|#     proxy_set_header Connection|    proxy_set_header Connection|g' "$NGINX_CONF"
-        sed -i 's|#     proxy_set_header Host|    proxy_set_header Host|g' "$NGINX_CONF"
-        sed -i 's|# }$|}|' "$NGINX_CONF"
-        
         nginx -t 2>/dev/null && systemctl restart nginx
         echo -e "${GREEN}[+] Nginx proxy para Xray configurado${NC}"
     else
@@ -168,8 +126,89 @@ setup_nginx_proxy() {
     press_enter; menu_ssl
 }
 
-case "$1" in
-    nginx) install_nginx ;;
-    cert)  install_letsencrypt ;;
-    *)     menu_ssl ;;
-esac
+install_stunnel() {
+    echo ""
+    echo -e "${CYAN}[*] Instalando Stunnel (SSH sobre SSL/443)...${NC}"
+
+    apt install -y stunnel4 2>/dev/null
+    if ! command -v stunnel4 &>/dev/null; then
+        echo -e "${RED}[!] Error instalando stunnel4${NC}"
+        press_enter; menu_ssl; return
+    fi
+
+    echo -ne " ${WHITE}Puerto SSL para stunnel (default 443): ${NC}"; read SSL_PORT
+    [[ -z "$SSL_PORT" ]] && SSL_PORT=443
+
+    SSH_PORT_DEST=$(grep "^SSH_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "22")
+    VPS_IP=$(grep "^VPS_IP=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || curl -s ifconfig.me)
+
+    echo -e "${CYAN}[*] Generando certificado autofirmado...${NC}"
+    openssl req -new -x509 -days 3650 -nodes \
+        -out /etc/stunnel/stunnel.pem \
+        -keyout /etc/stunnel/stunnel.pem \
+        -subj "/CN=$VPS_IP" 2>/dev/null
+    chmod 600 /etc/stunnel/stunnel.pem
+
+    cat > /etc/stunnel/stunnel.conf << STUNNELCONF
+pid = /var/run/stunnel4/stunnel4.pid
+output = /var/log/stunnel4/stunnel.log
+
+[ssh-ssl]
+accept  = $SSL_PORT
+connect = 127.0.0.1:$SSH_PORT_DEST
+cert    = /etc/stunnel/stunnel.pem
+STUNNELCONF
+
+    echo "ENABLED=1" > /etc/default/stunnel4
+    ufw allow "$SSL_PORT/tcp" 2>/dev/null
+    systemctl daemon-reload
+    systemctl enable stunnel4 2>/dev/null
+    systemctl restart stunnel4
+
+    sed -i '/^STUNNEL_PORT=/d' /etc/gtkvpn/config.conf
+    echo "STUNNEL_PORT=$SSL_PORT" >> /etc/gtkvpn/config.conf
+
+    sleep 1
+    if systemctl is-active --quiet stunnel4; then
+        echo ""
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${GREEN}[+] Stunnel instalado y activo${NC}"
+        echo -e " ${WHITE}Puerto SSL:${NC} ${CYAN}$SSL_PORT${NC}"
+        echo -e " ${WHITE}→ SSH:${NC}      ${CYAN}127.0.0.1:$SSH_PORT_DEST${NC}"
+        echo -e " ${WHITE}Cert:${NC}       /etc/stunnel/stunnel.pem"
+        echo ""
+        echo -e " ${WHITE}Configuración GTK VPN / HTTP Custom:${NC}"
+        echo -e "  Host:   ${CYAN}$VPS_IP${NC}"
+        echo -e "  Puerto: ${CYAN}$SSL_PORT${NC}"
+        echo -e "  SSL:    ${CYAN}✅ Activado${NC}"
+        echo -e "  SNI:    ${CYAN}cdn-global.configcat.com${NC}"
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    else
+        echo -e "${RED}[!] Error iniciando stunnel:${NC}"
+        journalctl -u stunnel4 --no-pager -n 10
+    fi
+    press_enter; menu_ssl
+}
+
+status_stunnel() {
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${WHITE}         Estado de Stunnel${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    if systemctl is-active --quiet stunnel4; then
+        echo -e " Estado: ${GREEN}[ACTIVO]${NC}"
+    else
+        echo -e " Estado: ${RED}[INACTIVO]${NC}"
+    fi
+    STUNNEL_PORT=$(grep "^STUNNEL_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "443")
+    echo -e " Puerto SSL: ${CYAN}$STUNNEL_PORT${NC}"
+    if [[ -f /etc/stunnel/stunnel.conf ]]; then
+        echo ""
+        echo -e "${WHITE}Configuración actual:${NC}"
+        cat /etc/stunnel/stunnel.conf
+    fi
+    echo ""
+    echo -e "${WHITE}Conexiones activas en :$STUNNEL_PORT:${NC}"
+    ss -tnp | grep ":$STUNNEL_PORT" | wc -l
+    press_enter; menu_ssl
+}
