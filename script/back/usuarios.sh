@@ -226,17 +226,21 @@ active_users() {
         [[ -z "$AUTH_LINE" ]] && continue
         UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=Accepted password for )\S+")
         IP=$(echo "$AUTH_LINE" | grep -oP 'from \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-        HORA=$(echo "$AUTH_LINE" | awk '{print $1, $2, $3}')
+        HORA=$(echo "$AUTH_LINE" | grep -oP '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
         # Excluir usuario root (admin)
         [[ "$UNAME" == "root" ]] && continue
         VPN_SEEN["$UNAME"]="SSH|$HORA"
     done
 
+        declare -A VPN_COUNT_MAP
     for UNAME in "${!VPN_SEEN[@]}"; do
         TIPO=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f1)
         HORA=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f2-)
         TIEMPO=$(calc_tiempo "$HORA")
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" "$UNAME" "$TIPO" "$HORA" "$TIEMPO"
+        # Contar conexiones reales para este usuario
+        CONN_COUNT=$(ps aux | grep "sshd: $UNAME" | grep -v grep | grep -v priv | wc -l)
+        [[ $CONN_COUNT -eq 0 ]] && CONN_COUNT=1
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%-10s${NC} ${CYAN}[%s conex]${NC}\n" "$UNAME" "$TIPO" "$HORA" "$TIEMPO" "$CONN_COUNT"
         ((VPN_COUNT++))
     done
     [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN/SSH conectados${NC}"
