@@ -19,7 +19,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # --- Validar Licencia ---
-LICENSE_SERVER="http://102.129.137.143:4000"
+LICENSE_SERVER="http://172.93.111.249:3000"
 VPS_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null || curl -s --max-time 10 ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
 
 echo -e "${CYAN}[*] Ingresa tu KEY de licencia:${NC}"
@@ -45,6 +45,11 @@ if [[ "$STATUS" != "ok" ]]; then
     exit 1
 fi
 echo -e "${GREEN}[✓] Licencia valida - Propietario: $OWNER${NC}"
+
+# --- Fix PasswordAuthentication ---
+sed -i "s/PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config.d/*.conf 2>/dev/null
+echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+systemctl restart ssh
 
 # --- Verificar Ubuntu ---
 source /etc/os-release 2>/dev/null
