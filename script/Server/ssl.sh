@@ -223,3 +223,10 @@ status_stunnel() {
     ss -tnp | grep ":$STUNNEL_PORT" | wc -l
     press_enter; menu_ssl
 }
+
+# Manejo de argumentos
+case "$1" in
+    nginx) install_nginx ;;
+    cert) menu_ssl ;;
+    *) menu_ssl ;;
+esac
