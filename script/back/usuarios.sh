@@ -192,10 +192,11 @@ active_users() {
 
     # Usuarios VPN via WebSocket + Dropbear + OpenSSH
     echo -e " ${YELLOW}[ USUARIOS VPN/SSH ACTIVOS ]${NC}"
-    printf " ${WHITE}%-20s %-12s %-18s %-10s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION" "TIEMPO"
+    printf " ${WHITE}%-20s %-12s %-18s %-10s %-10s${NC}\n" "USUARIO" "TIPO" "HORA CONEXION" "TIEMPO" "CONEX"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
     VPN_COUNT=0
     declare -A VPN_SEEN
+    declare -A VPN_TYPES
 
     # --- Dropbear (puerto 2222 via WebSocket) ---
     MAIN_PID=$(pgrep -o dropbear 2>/dev/null)
@@ -210,7 +211,7 @@ active_users() {
             UNAME=$(echo "$AUTH_LINE" | grep -oP "(?<=for ')[^']+")
             IP_RAW=$(echo "$CONN_LINE" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             HORA=$(echo "$CONN_LINE" | awk '{print $1, $2, $3}')
-            [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="WS/Dropbear" || TIPO="Dropbear"
+            [[ "$IP_RAW" == "127.0.0.1" ]] && TIPO="SSL/Stunnel" || TIPO="Dropbear"
             VPN_SEEN["$UNAME"]="$TIPO|$HORA"
         fi
     done
@@ -229,7 +230,9 @@ active_users() {
         HORA=$(echo "$AUTH_LINE" | grep -oP '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
         # Excluir usuario root (admin)
         [[ "$UNAME" == "root" ]] && continue
-        VPN_SEEN["$UNAME"]="SSH|$HORA"
+        # Detectar si viene via SSL (127.0.0.1)
+        [[ "$IP" == "127.0.0.1" ]] && TIPO_SSH="HTTP" || TIPO_SSH="SSH"
+        VPN_SEEN["$UNAME"]="$TIPO_SSH|$HORA"
     done
 
         declare -A VPN_COUNT_MAP
@@ -237,10 +240,17 @@ active_users() {
         TIPO=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f1)
         HORA=$(echo "${VPN_SEEN[$UNAME]}" | cut -d'|' -f2-)
         TIEMPO=$(calc_tiempo "$HORA")
-        # Contar conexiones reales para este usuario
         CONN_COUNT=$(ps aux | grep "sshd: $UNAME" | grep -v grep | grep -v priv | wc -l)
         [[ $CONN_COUNT -eq 0 ]] && CONN_COUNT=1
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%-10s${NC} ${CYAN}[%s conex]${NC}\n" "$UNAME" "$TIPO" "$HORA" "$TIEMPO" "$CONN_COUNT"
+        # Detectar tipos adicionales
+        EXTRA_TIPOS=""
+        # Verificar UDP
+        UDP_ACTIVE=$(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected" | grep -c "$UNAME")
+        [[ $UDP_ACTIVE -gt 0 ]] && EXTRA_TIPOS="${EXTRA_TIPOS} +UDP"
+        # Verificar SSL activo
+        SSL_CONNS=$(ss -tnp 2>/dev/null | grep ":443" | grep ESTAB | wc -l)
+        
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%-10s${NC} ${CYAN}[%s conex]${NC}${YELLOW}%s${NC}\n" "$UNAME" "$TIPO" "$HORA" "$TIEMPO" "$CONN_COUNT" "$EXTRA_TIPOS"
         ((VPN_COUNT++))
     done
     [[ $VPN_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios VPN/SSH conectados${NC}"
@@ -269,13 +279,31 @@ active_users() {
     done < <(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected")
     for UNAME in "${!UDP_SEEN[@]}"; do
         TIEMPO_UDP=$(calc_tiempo "${UDP_HORA[$UNAME]}")
-        printf " ${GREEN}%-20s${NC} ${CYAN}%-18s${NC} ${YELLOW}%-18s${NC} ${WHITE}%s${NC}\n" \
-            "$UNAME" "${UDP_SEEN[$UNAME]}" "${UDP_HORA[$UNAME]}" "$TIEMPO_UDP"
+        HORA_UDP=$(echo "${UDP_HORA[$UNAME]}" | grep -oP '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
+        UDP_CONNS=$(journalctl -u udp-custom --no-pager --since "5 minutes ago" 2>/dev/null | grep "Client connected" | grep -c "$UNAME")
+        [[ $UDP_CONNS -eq 0 ]] && UDP_CONNS=1
+        printf " ${GREEN}%-20s${NC} ${CYAN}%-12s${NC} ${YELLOW}%-18s${NC} ${WHITE}%-10s${NC} ${CYAN}[%s conex]${NC}\n" \
+            "$UNAME" "UDP" "${HORA_UDP:-${UDP_HORA[$UNAME]}}" "$TIEMPO_UDP" "$UDP_CONNS"
         ((UDP_COUNT++))
     done
     [[ $UDP_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin usuarios UDP activos (ultimos 5 min)${NC}"
 
-    # Usuarios Xray/VLESS activos
+
+    # Conexiones SSL activas
+    echo ""
+    echo -e " ${YELLOW}[ CONEXIONES SSL ACTIVAS ]${NC}"
+    printf " ${WHITE}%-25s %-18s${NC}\n" "IP CLIENTE" "ESTADO"
+    echo -e "${CYAN} ---------------------------------------------------------${NC}"
+    SSL_COUNT=0
+    while IFS= read -r line; do
+        IP=$(echo "$line" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+        [[ -z "$IP" ]] && continue
+        printf " ${GREEN}%-25s${NC} ${CYAN}%s${NC}\n" "$IP" "SSL/443"
+        ((SSL_COUNT++))
+    done < <(ss -tnp 2>/dev/null | grep ":443" | grep ESTAB)
+    [[ $SSL_COUNT -eq 0 ]] && echo -e " ${GRAY}  Sin conexiones SSL activas${NC}"
+
+        # Usuarios Xray/VLESS activos
     echo -e " ${YELLOW}[ USUARIOS XRAY/VLESS ACTIVOS ]${NC}"
     printf " ${WHITE}%-20s %-18s %-10s${NC}\n" "USUARIO" "HORA CONEXION" "TIEMPO"
     echo -e "${CYAN} ---------------------------------------------------------${NC}"
