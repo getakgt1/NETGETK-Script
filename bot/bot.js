@@ -8,10 +8,10 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios       = require('axios');
 
 // ─── Configuración ────────────────────────────────────────────
-const BOT_TOKEN      = process.env.BOT_TOKEN      || 'TU_BOT_TOKEN_AQUI';
-const ADMIN_IDS      = (process.env.ADMIN_IDS     || 'TU_TELEGRAM_ID').split(',').map(Number);
-const LICENSE_SERVER = process.env.LICENSE_SERVER || 'http://localhost:3000';
-const ADMIN_TOKEN    = process.env.ADMIN_TOKEN    || 'netgetk-admin-secret-2024';
+const BOT_TOKEN='8667756036:AAFgmopK7LoP8ePCk_BLA_fCTYRJQrBOAkI';
+const ADMIN_IDS = [1462182277];
+const LICENSE_SERVER = 'http://127.0.0.1:3000';
+const ADMIN_TOKEN = '4f43ba5e23d946791d096c068f2b7509';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const api = axios.create({
