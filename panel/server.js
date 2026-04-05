@@ -219,7 +219,7 @@ app.get('/api/users', requireAuth, (req, res) => {
                 const sshdCount = parseInt(run(`ps aux 2>/dev/null | grep "sshd: ${conf.USERNAME}" | grep -v grep | wc -l`) || '0');
                 const dropbearCount = parseInt(run(`ss -tnp 2>/dev/null | grep ":2222" | grep "dropbear" | wc -l`) || '0');
                 conf.connected  = (whoCount + sshdCount + dropbearCount) > 0;
-                conf.connCount  = whoCount + sshdCount + dropbearCount;
+                conf.connCount  = whoCount + Math.floor(sshdCount/2) + dropbearCount;
                 users.push(conf);
             }
         });
