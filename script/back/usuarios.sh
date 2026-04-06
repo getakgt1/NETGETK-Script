@@ -16,6 +16,30 @@ INSTALL_DIR="/etc/gtkvpn"
 USERS_DIR="$INSTALL_DIR/users"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
 LOG_FILE="/var/log/gtkvpn/usuarios.log"
+# ── Sync Hysteria auth con usuarios SSH ──────────────────────
+hy_sync() {
+    local HY_CFG="/root/hysteria_server.json"
+    [[ ! -f "$HY_CFG" ]] && return
+    python3 -c "
+import json, glob
+users_dir = '/etc/gtkvpn/users'
+auths = []
+for f in glob.glob(users_dir + '/*.info'):
+    data = {}
+    for line in open(f).read().splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            data[k] = v
+    p = data.get('PASSWORD', '')
+    if p:
+        auths.append(p)
+with open('/root/hysteria_server.json') as f: d = json.load(f)
+d['auth']['config'] = auths
+with open('/root/hysteria_server.json', 'w') as f: json.dump(d, f)
+" 2>/dev/null
+    systemctl is-active --quiet hysteria 2>/dev/null && systemctl restart hysteria 2>/dev/null
+}
+
 
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter para continuar...${NC}"; read; }
 
@@ -97,6 +121,7 @@ INFO
     echo "$USERNAME hard maxlogins $LIMIT" >> /etc/security/limits.conf
 
     log_action "CREAR SSH usuario=$USERNAME expiry=$EXPIRY limit=$LIMIT"
+    hy_sync
 
     VPS_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
@@ -132,6 +157,7 @@ delete_ssh() {
     sed -i "/^$USERNAME/d" /etc/security/limits.conf 2>/dev/null
 
     log_action "ELIMINAR SSH usuario=$USERNAME"
+    hy_sync
 
     echo -e "${GREEN}[+] Usuario ${USERNAME} eliminado${NC}"
     press_enter
@@ -390,6 +416,7 @@ block_user() {
     pkill -u "$USERNAME" 2>/dev/null
     passwd -l "$USERNAME" 2>/dev/null
     log_action "BLOQUEAR SSH usuario=$USERNAME"
+    hy_sync
     echo -e "${GREEN}[+] Usuario ${USERNAME} bloqueado${NC}"
     press_enter
 }
@@ -403,6 +430,7 @@ unblock_user() {
     fi
     passwd -u "$USERNAME" 2>/dev/null
     log_action "DESBLOQUEAR SSH usuario=$USERNAME"
+    hy_sync
     echo -e "${GREEN}[+] Usuario ${USERNAME} desbloqueado${NC}"
     press_enter
 }
