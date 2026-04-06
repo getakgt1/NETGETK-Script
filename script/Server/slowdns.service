@@ -1,0 +1,12 @@
+[Unit]
+Description=SlowDNS Server - GTKVPN
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/slowdns -udp :5300 -privkey-file /etc/gtkvpn/slowdns.key tun-jdy9kd.manager.firewallfalcon.qzz.io 127.0.0.1:22
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
