@@ -228,40 +228,72 @@ app.get('/api/users', requireAuth, (req, res) => {
 });
 
 app.post('/api/users/create', requireAuth, (req, res) => {
-    const { username, password, days, type } = req.body;
-    if (!username || (!password && type !== "xray")) return res.status(400).json({ error: "Datos incompletos" });
-    
+    const { username, password, days, type, xray_transport, xray_host, xray_path, xray_port } = req.body;
+    if (!username || (!password && type !== 'xray')) return res.status(400).json({ error: 'Datos incompletos' });
+
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + parseInt(days || 30));
     const expiryStr = expiry.toISOString().split('T')[0];
-    
+
     try {
         if (type === 'xray') {
-            // Crear usuario Xray
-            const uuid = run('uuidgen');
             if (!fs.existsSync(XRAY_CONFIG)) return res.status(400).json({ error: 'Xray no configurado' });
-            
+
+            const uuid      = run('uuidgen');
+            const conf      = readConf();
+            const ip        = run('curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk "{print $1}"');
+            const transport = xray_transport || 'ws';
+            const host      = (xray_host  || '').trim();
+            const usePath   = (xray_path  || conf.XRAY_WS_PATH || '/').trim();
+            const port      = (xray_port  || conf.XRAY_PORT    || '32595').toString();
+
             const config = JSON.parse(fs.readFileSync(XRAY_CONFIG, 'utf8'));
-            for (const inbound of config.inbounds || []) {
-                if (inbound.protocol === 'vless') {
-                    inbound.settings.clients = inbound.settings.clients || [];
-                    inbound.settings.clients.push({ id: uuid, flow: '', email: `${username}@gtkvpn` });
-                }
+
+            // Buscar inbound con ese puerto o crear uno nuevo
+            let target = null;
+            for (const ib of config.inbounds || []) {
+                if (ib.protocol === 'vless' && String(ib.port) === port) { target = ib; break; }
             }
+            if (!target) {
+                target = {
+                    tag: `vless-${transport}-${port}`,
+                    port: parseInt(port),
+                    listen: '0.0.0.0',
+                    protocol: 'vless',
+                    settings: { clients: [], decryption: 'none' },
+                    streamSettings: transport === 'splithttp'
+                        ? { network: 'splithttp', splithttpSettings: { path: usePath, host } }
+                        : { network: 'ws', wsSettings: { path: usePath, headers: {} } }
+                };
+                config.inbounds.push(target);
+                run(`ufw allow ${port}/tcp 2>/dev/null`);
+            } else if (transport === 'splithttp') {
+                target.streamSettings = {
+                    network: 'splithttp',
+                    splithttpSettings: {
+                        path: usePath,
+                        host: host || target.streamSettings?.splithttpSettings?.host || ''
+                    }
+                };
+            }
+
+            target.settings.clients = target.settings.clients || [];
+            target.settings.clients.push({ id: uuid, flow: '', email: `${username}@gtkvpn` });
+
             fs.writeFileSync(XRAY_CONFIG, JSON.stringify(config, null, 2));
             run('systemctl restart xray');
-            
-            const conf = readConf();
-            const ip = run('curl -s --max-time 3 ifconfig.me');
-            const port = conf.XRAY_PORT || '32595';
-            const wsPath = encodeURIComponent(conf.XRAY_WS_PATH || '/');
-            const link = `vless://${uuid}@${ip}:${port}?type=ws&encryption=none&path=${wsPath}&security=none#${username}-GTKVPN`;
-            
+
+            const ep   = encodeURIComponent(usePath);
+            const eh   = encodeURIComponent(host);
+            const link = transport === 'splithttp'
+                ? `vless://${uuid}@${ip}:${port}?type=splithttp&encryption=none&path=${ep}&host=${eh}&security=none#${username}-GTKVPN`
+                : `vless://${uuid}@${ip}:${port}?type=ws&encryption=none&path=${ep}&security=none#${username}-GTKVPN`;
+
             fs.mkdirSync(USERS_DIR, { recursive: true });
             fs.writeFileSync(path.join(USERS_DIR, `${username}_xray.info`),
-                `USERNAME=${username}\nUUID=${uuid}\nTYPE=xray\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`);
-            
-            return res.json({ ok: true, uuid, link });
+                `USERNAME=${username}\nUUID=${uuid}\nTYPE=xray\nTRANSPORT=${transport}\nHOST=${host}\nPATH=${usePath}\nPORT=${port}\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`);
+
+            return res.json({ ok: true, uuid, link, transport, host, port });
         } else {
             // Crear usuario SSH
             const exists = run(`id ${username} 2>/dev/null`);
@@ -375,6 +407,39 @@ app.get('/api/xray/config', requireAuth, (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ── HOSTS XRAY (lista guardada para el panel) ─────────────────
+app.get('/api/xray/hosts', requireAuth, (req, res) => {
+    try {
+        const hostsFile = '/etc/gtkvpn/xray_hosts.json';
+        if (!fs.existsSync(hostsFile)) return res.json({ hosts: [] });
+        res.json({ hosts: JSON.parse(fs.readFileSync(hostsFile, 'utf8')) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/xray/hosts', requireAuth, (req, res) => {
+    try {
+        const { host } = req.body;
+        if (!host) return res.status(400).json({ error: 'Host requerido' });
+        const hostsFile = '/etc/gtkvpn/xray_hosts.json';
+        let hosts = [];
+        if (fs.existsSync(hostsFile)) hosts = JSON.parse(fs.readFileSync(hostsFile, 'utf8'));
+        if (!hosts.includes(host)) hosts.push(host);
+        fs.writeFileSync(hostsFile, JSON.stringify(hosts));
+        res.json({ ok: true, hosts });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/xray/hosts/:host', requireAuth, (req, res) => {
+    try {
+        const hostsFile = '/etc/gtkvpn/xray_hosts.json';
+        let hosts = [];
+        if (fs.existsSync(hostsFile)) hosts = JSON.parse(fs.readFileSync(hostsFile, 'utf8'));
+        hosts = hosts.filter(h => h !== decodeURIComponent(req.params.host));
+        fs.writeFileSync(hostsFile, JSON.stringify(hosts));
+        res.json({ ok: true, hosts });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ── LOGS ──────────────────────────────────────────────────────
 app.get('/api/logs/:service', requireAuth, (req, res) => {
     const { service } = req.params;
@@ -422,10 +487,14 @@ app.get('/api/users/:username/details', requireAuth, (req, res) => {
                 const [k, ...v] = line.split('=');
                 if (k) u[k.trim()] = v.join('=').trim();
             });
-            const port = conf.XRAY_PORT || '32595';
-            const wsPath = encodeURIComponent(conf.XRAY_WS_PATH || '/');
-            const link = `vless://${u.UUID}@${ip}:${port}?type=ws&encryption=none&path=${wsPath}&security=none#${username}-GTKVPN`;
-            return res.json({ type: 'xray', data: u, ip, link, port });
+            const port      = u.PORT      || conf.XRAY_PORT    || '32595';
+            const transport = u.TRANSPORT || 'ws';
+            const userHost  = u.HOST      || '';
+            const userPath  = encodeURIComponent(u.PATH || conf.XRAY_WS_PATH || '/');
+            const link = transport === 'splithttp'
+                ? `vless://${u.UUID}@${ip}:${port}?type=splithttp&encryption=none&path=${userPath}&host=${encodeURIComponent(userHost)}&security=none#${username}-GTKVPN`
+                : `vless://${u.UUID}@${ip}:${port}?type=ws&encryption=none&path=${userPath}&security=none#${username}-GTKVPN`;
+            return res.json({ type: 'xray', data: u, ip, link, port, transport, host: userHost });
         }
 
         res.status(404).json({ error: 'Usuario no encontrado' });
