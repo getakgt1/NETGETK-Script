@@ -719,10 +719,15 @@ textarea { resize: vertical; font-family: monospace; font-size: 12px; }
       </div>
     </div>
     <div id="new-user-result" style="display:none;margin-top:12px">
-      <label>Link generado</label>
+      <label>Link VLESS</label>
       <div class="link-box">
-        <span id="new-user-link" style="flex:1"></span>
+        <span id="new-user-link" style="flex:1;word-break:break-all"></span>
         <button class="copy-btn" onclick="copyText('new-user-link')">📋</button>
+      </div>
+      <label style="margin-top:10px;display:block">JSON Cliente (para pegar en panel)</label>
+      <div class="link-box" style="margin-top:4px">
+        <span id="new-user-json" style="flex:1;word-break:break-all;font-size:11px"></span>
+        <button class="copy-btn" onclick="copyText('new-user-json')">📋</button>
       </div>
     </div>
     <div class="modal-actions">
@@ -1140,6 +1145,7 @@ async function createUser() {
     toast(`✓ Usuario ${username} creado`);
     if (d.link) {
       document.getElementById('new-user-link').textContent = d.link;
+      if (d.clientJson) document.getElementById('new-user-json').textContent = d.clientJson;
       document.getElementById('new-user-result').style.display = 'block';
     }
     loadUsers();
