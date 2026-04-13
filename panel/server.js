@@ -303,7 +303,24 @@ app.post('/api/users/create', requireAuth, (req, res) => {
             fs.writeFileSync(path.join(USERS_DIR, `${username}_xray.info`),
                 `USERNAME=${username}\nUUID=${uuid}\nTYPE=xray\nTRANSPORT=${transport}\nHOST=${host}\nPATH=${usePath}\nPORT=${port}\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`);
 
-            return res.json({ ok: true, uuid, link, transport, host, port });
+            // Generar JSON cliente completo
+            const clientJson = JSON.stringify({
+                log: { loglevel: 'warning' },
+                inbounds: [{ tag: 'socks', port: 10808, protocol: 'socks', settings: { auth: 'noauth', udp: true } }],
+                outbounds: [
+                    {
+                        tag: 'proxy',
+                        protocol: 'vless',
+                        settings: { vnext: [{ address: ip, port: parseInt(port), users: [{ id: uuid, encryption: 'none' }] }] },
+                        streamSettings: transport === 'splithttp'
+                            ? { network: 'splithttp', splithttpSettings: { path: usePath, host } }
+                            : { network: 'ws', wsSettings: { path: usePath, headers: {} } }
+                    },
+                    { tag: 'direct', protocol: 'freedom' }
+                ]
+            });
+
+            return res.json({ ok: true, uuid, link, clientJson, transport, host, port });
         } else {
             // Crear usuario SSH
             const exists = run(`id ${username} 2>/dev/null`);
