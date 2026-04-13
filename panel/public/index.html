@@ -686,6 +686,38 @@ textarea { resize: vertical; font-family: monospace; font-size: 12px; }
       <label>Días de expiración</label>
       <input type="number" id="new-user-days" value="30" min="1" max="365">
     </div>
+    <div id="xray-extra-fields" style="display:none">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Transport</label>
+          <select id="new-xray-transport">
+            <option value="ws">WebSocket</option>
+            <option value="splithttp">SplitHTTP</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Puerto</label>
+          <input type="number" id="new-xray-port" placeholder="ej. 8081">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Host / SNI</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="new-xray-host" placeholder="ej. helm.tekmob.com" style="flex:1">
+          <select id="saved-hosts-select" onchange="pickSavedHost()" style="flex:1">
+            <option value="">-- hosts guardados --</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Path</label>
+        <input type="text" id="new-xray-path" placeholder="/" value="/">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <input type="text" id="save-host-input" placeholder="host a guardar" style="flex:1">
+        <button class="btn btn-secondary" style="white-space:nowrap" onclick="saveHost()">+ Guardar host</button>
+      </div>
+    </div>
     <div id="new-user-result" style="display:none;margin-top:12px">
       <label>Link generado</label>
       <div class="link-box">
@@ -1083,6 +1115,8 @@ function openCreateUser() {
 function toggleUserType() {
   const t = document.getElementById('new-user-type').value;
   document.getElementById('new-user-pass-wrap').style.display = t === 'ssh' ? 'block' : 'none';
+  document.getElementById('xray-extra-fields').style.display  = t === 'xray' ? 'block' : 'none';
+  if (t === 'xray') loadSavedHosts();
 }
 
 async function createUser() {
@@ -1090,12 +1124,16 @@ async function createUser() {
   const username = document.getElementById('new-user-name').value;
   const password = document.getElementById('new-user-pass').value;
   const days = document.getElementById('new-user-days').value;
+  const xray_transport = document.getElementById('new-xray-transport')?.value || 'ws';
+  const xray_host      = document.getElementById('new-xray-host')?.value || '';
+  const xray_path      = document.getElementById('new-xray-path')?.value || '/';
+  const xray_port      = document.getElementById('new-xray-port')?.value || '';
 
   if (!username) { toast('Nombre requerido', false); return; }
 
   const r = await fetch(`${API}/api/users/create`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ username, password, days, type })
+    body: JSON.stringify({ username, password, days, type, xray_transport, xray_host, xray_path, xray_port })
   });
   const d = await r.json();
   if (d.ok) {
@@ -1108,6 +1146,37 @@ async function createUser() {
   } else {
     toast(`✗ ${d.error}`, false);
   }
+}
+
+async function loadSavedHosts() {
+  try {
+    const r = await fetch(`${API}/api/xray/hosts`);
+    const d = await r.json();
+    const sel = document.getElementById('saved-hosts-select');
+    sel.innerHTML = '<option value="">-- hosts guardados --</option>';
+    (d.hosts || []).forEach(h => {
+      const o = document.createElement('option');
+      o.value = h; o.textContent = h;
+      sel.appendChild(o);
+    });
+  } catch(e) {}
+}
+
+function pickSavedHost() {
+  const v = document.getElementById('saved-hosts-select').value;
+  if (v) document.getElementById('new-xray-host').value = v;
+}
+
+async function saveHost() {
+  const host = document.getElementById('save-host-input').value.trim();
+  if (!host) { toast('Escribe un host', false); return; }
+  const r = await fetch(`${API}/api/xray/hosts`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ host })
+  });
+  const d = await r.json();
+  if (d.ok) { toast('Host guardado'); loadSavedHosts(); document.getElementById('save-host-input').value = ''; }
+  else toast(`✗ ${d.error}`, false);
 }
 
 async function deleteUser(username) {
