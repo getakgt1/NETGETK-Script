@@ -278,7 +278,17 @@ app.post('/api/users/create', requireAuth, (req, res) => {
             }
 
             target.settings.clients = target.settings.clients || [];
-            target.settings.clients.push({ id: uuid, flow: '', email: `${username}@gtkvpn` });
+            // Asegurar que clientes existentes tengan email
+            target.settings.clients = target.settings.clients.map((c, i) => ({
+                ...c,
+                flow: c.flow || '',
+                email: c.email || `user${i}@gtkvpn`
+            }));
+            // Evitar duplicados
+            const alreadyExists = target.settings.clients.some(c => c.email === `${username}@gtkvpn`);
+            if (!alreadyExists) {
+                target.settings.clients.push({ id: uuid, flow: '', email: `${username}@gtkvpn` });
+            }
 
             fs.writeFileSync(XRAY_CONFIG, JSON.stringify(config, null, 2));
             run('systemctl restart xray');
