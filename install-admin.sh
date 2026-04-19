@@ -177,6 +177,7 @@ echo -e "${CYAN}[3/4] Instalando paquetes npm...${NC}"
 cd /opt/netgetk/license-server && npm install --silent 2>/dev/null
 echo -e "  ${GREEN}✓ License server listo${NC}"
 cd /opt/netgetk/bot && npm install --silent 2>/dev/null
+cd /etc/gtkvpn/panel && npm install --silent 2>/dev/null
 echo -e "  ${GREEN}✓ Bot listo${NC}"
 
 # ── Iniciar con PM2 ───────────────────────────────────────────
