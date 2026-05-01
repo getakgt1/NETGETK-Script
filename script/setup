@@ -217,6 +217,7 @@ ufw --force enable 2>/dev/null
 echo -e "${CYAN}[7/7] Instalando panel web...${NC}"
 if [[ -f "$INSTALL_DIR/panel/server.js" ]]; then
     cd "$INSTALL_DIR/panel"
+    npm install express express-session body-parser --silent 2>/dev/null
     npm install --silent 2>/dev/null
     pm2 delete netgetk-panel 2>/dev/null
     pm2 start server.js --name netgetk-panel 2>/dev/null
