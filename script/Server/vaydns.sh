@@ -123,6 +123,11 @@ WantedBy=multi-user.target
 SVCEOF
     systemctl daemon-reload; systemctl enable hysteria; systemctl restart hysteria
     ufw allow "${HY_PORT}/udp" 2>/dev/null; ufw allow "${HY_PORT}/tcp" 2>/dev/null
+    apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null
+    iptables -I INPUT -p udp --dport "$HY_PORT" -j ACCEPT
+    iptables -t raw -I PREROUTING -p udp --dport "$HY_PORT" -j NOTRACK
+    iptables -t raw -I PREROUTING -p udp --sport "$HY_PORT" -j NOTRACK
+    netfilter-persistent save 2>/dev/null
     grep -q "^HY_PORT=" "$INSTALL_DIR/config.conf" 2>/dev/null \
         && sed -i "s/^HY_PORT=.*/HY_PORT=$HY_PORT/" "$INSTALL_DIR/config.conf" \
         || echo "HY_PORT=$HY_PORT" >> "$INSTALL_DIR/config.conf"
