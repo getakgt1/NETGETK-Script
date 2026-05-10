@@ -142,6 +142,7 @@ SCRIPTS=(
     "Server/socks5.sh"
     "Server/slowdns.sh"
     "Server/udp.sh"
+    "Server/vaydns.sh"
     "back/usuarios.sh"
     "back/contador.sh"
     "back/optimizador.sh"
