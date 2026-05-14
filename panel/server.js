@@ -19,7 +19,7 @@ app.use(session({
     secret: 'gtkvpn-secret-2024',
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 86400000 }
+    cookie: { maxAge: 86400000, sameSite: 'lax', httpOnly: true }
 }));
 
 // Credenciales del panel (cambiar en producción)
@@ -198,6 +198,12 @@ app.get('/api/users', requireAuth, (req, res) => {
         const users = [];
         if (!fs.existsSync(USERS_DIR)) return res.json([]);
         
+        const today      = new Date().toISOString().split('T')[0];
+        const whoOut     = run('who 2>/dev/null');
+        const psOut      = run('ps aux 2>/dev/null');
+        const ssOut      = run('ss -tnp 2>/dev/null');
+        const shadowOut  = run('cat /etc/shadow 2>/dev/null');
+        const dropbearTotal = (ssOut.match(/:2222.*dropbear/g) || []).length;
         fs.readdirSync(USERS_DIR).forEach(file => {
             if (!file.endsWith('.info')) return;
             const conf = {};
@@ -207,19 +213,15 @@ app.get('/api/users', requireAuth, (req, res) => {
                     if (k) conf[k.trim()] = v.join('=').trim();
                 });
             if (conf.USERNAME) {
-                const today = new Date().toISOString().split('T')[0];
                 conf.expired = conf.EXPIRY && conf.EXPIRY < today;
-
-                // Detectar si está bloqueado
-                const passwdStatus = run(`passwd -S ${conf.USERNAME} 2>/dev/null`);
-                conf.blocked = passwdStatus.includes(' L ') || passwdStatus.includes(' LK ');
-
-                // Detectar conexión: sesiones TTY (who) + procesos sshd del usuario
-                const whoCount  = parseInt(run(`who 2>/dev/null | grep -c "^${conf.USERNAME} "`) || '0');
-                const sshdCount = parseInt(run(`ps aux 2>/dev/null | grep "sshd: ${conf.USERNAME}" | grep -v grep | wc -l`) || '0');
-                const dropbearCount = parseInt(run(`ss -tnp 2>/dev/null | grep ":2222" | grep "dropbear" | wc -l`) || '0');
-                conf.connected  = (whoCount + sshdCount + dropbearCount) > 0;
-                conf.connCount  = whoCount + Math.floor(sshdCount/2) + dropbearCount;
+                const shadowLine = shadowOut.split('\n').find(l => l.startsWith(conf.USERNAME + ':'));
+                const shadowHash = shadowLine ? shadowLine.split(':')[1] : '';
+                conf.blocked = shadowHash.startsWith('!') || shadowHash.startsWith('*');
+                const whoCount  = (whoOut.match(new RegExp('^' + conf.USERNAME + ' ', 'gm')) || []).length;
+                const sshdCount = (psOut.match(new RegExp('sshd: ' + conf.USERNAME + '[^/]', 'g')) || []).length;
+                const dropbearCount = (ssOut.match(new RegExp('dropbear.*' + conf.USERNAME, 'g')) || []).length;
+                conf.connected  = (whoCount + sshdCount + dropbearTotal + dropbearCount) > 0;
+                conf.connCount  = whoCount + Math.floor(sshdCount / 2) + dropbearTotal;
                 users.push(conf);
             }
         });

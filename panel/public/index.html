@@ -1380,6 +1380,7 @@ fetch(`${API}/api/overview`).then(r => {
     init();
   }
 }).catch(() => {});
+const _origFetch = window.fetch; window.fetch = (u, o={}) => _origFetch(u, {...o, credentials: "include"});
 </script>
 
 <!-- Modal detalles usuario -->
