@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # ============================================================
 #   GTKVPN - Gestión de Usuarios SSH / Xray
 #   FIX: Expiración, limpieza Xray, límite de conexiones,
