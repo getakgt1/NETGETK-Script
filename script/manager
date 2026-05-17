@@ -81,7 +81,8 @@ menu_protocolos() {
     SLOWDNS_ST=$(systemctl is-active --quiet slowdns 2>/dev/null && st_on || st_off)
     UDP_ST=$(systemctl is-active --quiet udp-custom 2>/dev/null && st_on || st_off)
     HY_ST=$(systemctl is-active --quiet hysteria 2>/dev/null && st_on || st_off)
-    VAYDNS_ST=$(systemctl is-active --quiet hysteria 2>/dev/null && [[ -f /root/hysteria.crt ]] && st_on || st_off)
+    VAYDNS_ST=$(systemctl is-active --quiet hysteria 2/dev/null && [[ -f /root/hysteria.crt ]] && st_on || st_off)
+    FALCON_ST=$(systemctl is-active --quiet falcon-proxy 2/dev/null && st_on || st_off)
     
     printf " ${WHITE}[1]${NC}  ⇒ OpenSSH          %-12s" "$SSH_ST"
     printf " ${WHITE}[2]${NC}  ⇒ WEB-NGinx        %s\n" "$NGINX_ST"
@@ -95,6 +96,7 @@ menu_protocolos() {
     printf " ${WHITE}[10]${NC} ⇒ SpeedTest        \n"
     printf " ${WHITE}[11]${NC} ⇒ Hysteria         %-12s\n" "$HY_ST"
     printf " ${WHITE}[12]${NC} ⇒ VayDNS SSH       %-12s\n" "$VAYDNS_ST"
+    printf " ${WHITE}[13]${NC} ⇒ Falcon Proxy     %-12s\n" "$FALCON_ST"
     echo ""
     echo -e " ${WHITE}[0]${NC}  ⇒ ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -113,6 +115,7 @@ menu_protocolos() {
         10) bash $INSTALL_DIR/back/speedtest.sh; menu_protocolos ;;
         11) bash $INSTALL_DIR/Server/hysteria.sh; menu_protocolos ;;
         12) bash $INSTALL_DIR/Server/vaydns.sh; menu_protocolos ;;
+        13) bash $INSTALL_DIR/Server/falcon-proxy.sh; menu_protocolos ;;
         0) show_main ;;
         *) menu_protocolos ;;
     esac
