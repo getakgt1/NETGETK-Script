@@ -82,7 +82,7 @@ menu_protocolos() {
     UDP_ST=$(systemctl is-active --quiet udp-custom 2>/dev/null && st_on || st_off)
     HY_ST=$(systemctl is-active --quiet hysteria 2>/dev/null && st_on || st_off)
     VAYDNS_ST=$(systemctl is-active --quiet hysteria 2/dev/null && [[ -f /root/hysteria.crt ]] && st_on || st_off)
-    FALCON_ST=$(systemctl is-active --quiet falcon-proxy 2/dev/null && st_on || st_off)
+    FALCON_ST=$(systemctl is-active --quiet falcon-proxy 2>/dev/null && st_on || st_off)
     
     printf " ${WHITE}[1]${NC}  ⇒ OpenSSH          %-12s" "$SSH_ST"
     printf " ${WHITE}[2]${NC}  ⇒ WEB-NGinx        %s\n" "$NGINX_ST"
