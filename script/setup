@@ -144,6 +144,7 @@ SCRIPTS=(
     "Server/udp.sh"
     "Server/vaydns.sh"
     "Server/falcon-proxy.sh"
+    "Server/falconproxy"
     "back/usuarios.sh"
     "back/contador.sh"
     "back/optimizador.sh"
