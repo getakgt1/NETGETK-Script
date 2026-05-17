@@ -230,6 +230,11 @@ if [[ -f "$INSTALL_DIR/panel/server.js" ]]; then
 fi
 
 # Crear enlace global 'menu'
+# Instalar binario falconproxy
+if [[ -f "$INSTALL_DIR/Server/falconproxy" ]]; then
+    cp "$INSTALL_DIR/Server/falconproxy" /usr/local/bin/falconproxy
+    chmod +x /usr/local/bin/falconproxy
+fi
 ln -sf $INSTALL_DIR/manager /usr/local/bin/menu
 chmod +x /usr/local/bin/menu
 
