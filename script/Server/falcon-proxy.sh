@@ -75,7 +75,7 @@ menu_falcon_proxy() {
     echo -e " ${WHITE}[4]${NC}  ↺  Reiniciar Servicio"
     echo -e " ${WHITE}[5]${NC}  📊 Ver Estado Detallado"
     echo -e " ${WHITE}[6]${NC}  📋 Ver Logs en Tiempo Real"
-    echo -e " ${WHITE}[7]${NC}  ⚙  Cambiar Modo (pdirect / falcontunnel)"
+    echo -e " ${WHITE}[7]${NC}  ⚙  Cambiar Modo (pdirect / falcontunnel / falconproxy)"
     echo -e " ${WHITE}[8]${NC}  🗑  Desinstalar Falcon Proxy"
     echo ""
     echo -e " ${WHITE}[0]${NC}  ${RED}[ REGRESAR ]${NC}"
@@ -124,12 +124,14 @@ install_falcon_proxy() {
     echo -e " ${WHITE}Elige el modo del proxy:${NC}"
     echo -e "   ${CYAN}[1]${NC} pdirect    — Proxy Python (WebSocket SSH, incluido en NETGETK)"
     echo -e "   ${CYAN}[2]${NC} falcontunnel — Proxy Rust de FirewallFalcon (descarga binario)"
+    echo -e "   ${CYAN}[3]${NC} falconproxy  — Falcon Proxy v1.2-RustFast (local)"
     echo ""
     echo -ne " ${WHITE}► Modo (Enter = pdirect): ${NC}"
     read MODE_OPT
     
     case $MODE_OPT in
         2) PROXY_MODE="falcontunnel" ;;
+        3) PROXY_MODE="falconproxy" ;;
         *) PROXY_MODE="pdirect" ;;
     esac
 
@@ -338,6 +340,12 @@ _install_falcontunnel_binary() {
         BINARY_NAME="FalconTunnelArm"
     fi
 
+    # Primero verificar si ya existe falconproxy local (v1.2-RustFast)
+    if [[ -f /usr/local/bin/falconproxy ]]; then
+        echo -e "  ${GREEN}✓ Usando falconproxy local (v1.2-RustFast)${NC}"
+        PROXY_MODE="falconproxy"
+        return
+    fi
     RELEASE_URL="https://github.com/firewallfalcons/FalconTunnel/releases/download/v1.0.0/$BINARY_NAME"
 
     if curl -L --max-time 30 -o /tmp/falcontunnel_core "$RELEASE_URL" 2>/dev/null && \
@@ -359,7 +367,11 @@ _install_falcontunnel_binary() {
 # ── Crear servicio systemd según el modo ──────────────────────
 _create_systemd_service() {
     # Construir el ExecStart según modo
-    if [[ "$PROXY_MODE" == "falcontunnel" ]]; then
+    if [[ "$PROXY_MODE" == "falconproxy" ]]; then
+        EXEC_BIN="/usr/local/bin/falconproxy"
+        EXEC_CMD="$EXEC_BIN -p $PROXY_PORTS"
+        RUN_USER="root"
+    elif [[ "$PROXY_MODE" == "falcontunnel" ]]; then
         EXEC_BIN="/usr/local/bin/falcontunnel_core"
         EXEC_CMD="$EXEC_BIN $PROXY_PORTS"
         RUN_USER="nobody"
@@ -468,6 +480,7 @@ change_mode() {
     echo ""
     echo -e " ${WHITE}[1]${NC} pdirect (Python — incluido en NETGETK)"
     echo -e " ${WHITE}[2]${NC} falcontunnel (Rust — binario de FirewallFalcon)"
+    echo -e " ${WHITE}[3]${NC} falconproxy  (v1.2-RustFast — binario local)"
     echo ""
     echo -ne " ${WHITE}► Nuevo modo: ${NC}"
     read MODE_OPT
@@ -475,6 +488,7 @@ change_mode() {
     case $MODE_OPT in
         1) PROXY_MODE="pdirect" ;;
         2) PROXY_MODE="falcontunnel" ;;
+        3) PROXY_MODE="falconproxy" ;;
         *) echo -e "${RED}[!] Opción inválida${NC}"; press_enter; menu_falcon_proxy; return ;;
     esac
 
