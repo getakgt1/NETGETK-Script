@@ -19,7 +19,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # --- Validar Licencia ---
-LICENSE_SERVER="http://172.93.111.249:3000"
+LICENSE_SERVER="http://66.94.101.32:3000"
 VPS_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null || curl -s --max-time 10 ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
 
 echo -e "${CYAN}[*] Ingresa tu KEY de licencia:${NC}"
