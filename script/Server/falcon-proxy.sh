@@ -154,11 +154,11 @@ install_falcon_proxy() {
     echo -e "  ${GREEN}✓ Python3, Dropbear, libcap2-bin${NC}"
 
     # ── Instalar el binario/proxy según modo ─────────────────
-    if [[ "$PROXY_MODE" == "falcontunnel" ]]; then
-        _install_falcontunnel_binary
-    else
-        _install_pdirect
-    fi
+    case "$PROXY_MODE" in
+        falcontunnel) _install_falcontunnel_binary ;;
+        falconproxy)  _install_falconproxy ;;
+        *)            _install_pdirect ;;
+    esac
 
     # ── Crear servicio systemd ────────────────────────────────
     echo -e "${CYAN}[3/4] Configurando servicio systemd...${NC}"
@@ -201,11 +201,23 @@ _install_pdirect() {
     cat > /usr/local/bin/pdirect.py << 'PDEOF'
 #!/usr/bin/python3
 # pdirect.py — Falcon Proxy: SSH WebSocket compatible con HTTP Custom / NapsternetV
-import socket, threading, sys, select
+import socket, threading, sys, select, time, traceback, binascii
 
 REMOTE_ADDR = "127.0.0.1"
 BUFFER_SIZE = 65536
 HTTP_METHODS = [b"GET ", b"POST ", b"PUT ", b"CONNECT ", b"HTTP", b"OPTI", b"HEAD"]
+
+DEBUG_LOG = "/var/log/falcon-proxy-debug.log"
+
+def dbg(msg):
+    try:
+        with open(DEBUG_LOG, "a") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except:
+        pass
+
+def hexpreview(b, n=120):
+    return binascii.hexlify(b[:n]).decode()
 
 def get_ssh_port():
     try:
@@ -247,7 +259,9 @@ def handler(client_socket, address):
     remote = None
     try:
         data = read_payload(client_socket)
+        dbg(f"--- new conn {address} | initial data ({len(data)}b): {hexpreview(data, 400)}")
         if not data:
+            dbg(f"{address} | sin datos iniciales, cerrando")
             client_socket.close(); return
         remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote.connect((REMOTE_ADDR, REMOTE_PORT))
@@ -257,29 +271,69 @@ def handler(client_socket, address):
             remote.settimeout(5)
             try:
                 banner = remote.recv(BUFFER_SIZE)
-            except:
+            except Exception as ex:
+                dbg(f"{address} | error leyendo banner remoto: {ex}")
                 banner = b""
             remote.settimeout(300)
+            dbg(f"{address} | banner remoto ({len(banner)}b): {hexpreview(banner)}")
             client_socket.sendall(
-                b"HTTP/1.1 101 Switching Protocols\r\n"
-                b"Upgrade: websocket\r\n"
+                b"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
+                b"Upgrade: WebSocket\r\n"
                 b"Connection: Upgrade\r\n\r\n"
             )
             if banner:
                 client_socket.sendall(banner)
+            # Cualquier byte que haya llegado pegado despues del \r\n\r\n
+            # (el arranque real del handshake SSH del cliente) NO debe
+            # descartarse: hay que reenviarlo al backend. Ademas, algunos
+            # payloads no traen \r\n\r\n en absoluto pero SI llevan pegada
+            # la linea de identificacion SSH ("SSH-2.0-...") del cliente
+            # en el mismo bloque inicial -> hay que detectarla tambien.
+            leftover = b""
+            sep_idx = data.find(b"\r\n\r\n")
+            sep_len = 4
+            if sep_idx == -1:
+                sep_idx = data.find(b"\n\n")
+                sep_len = 2
+            if sep_idx != -1:
+                leftover = data[sep_idx + sep_len:]
+                dbg(f"{address} | leftover tras headers ({len(leftover)}b): {hexpreview(leftover)}")
+            else:
+                ssh_idx = data.find(b"SSH-")
+                if ssh_idx != -1:
+                    leftover = data[ssh_idx:]
+                    dbg(f"{address} | identificacion SSH embebida en data, "
+                        f"extrayendo desde offset {ssh_idx} ({len(leftover)}b): {hexpreview(leftover)}")
+                else:
+                    dbg(f"{address} | no se encontro separador ni identificacion SSH en data")
+            if leftover:
+                remote.sendall(leftover)
         else:
+            dbg(f"{address} | data no-HTTP, reenviando directo a remoto")
             remote.sendall(data)
         sockets = [client_socket, remote]
         while True:
             r, _, e = select.select(sockets, [], sockets, 300)
-            if e or not r: break
+            if e:
+                dbg(f"{address} | select devolvio error-sockets, cerrando")
+                break
+            if not r:
+                dbg(f"{address} | select timeout (300s) sin actividad")
+                break
             for s in r:
+                who = "client" if s is client_socket else "remote"
                 try:
                     d = s.recv(BUFFER_SIZE)
-                    if not d: return
+                    if not d:
+                        dbg(f"{address} | {who} cerro la conexion (recv vacio)")
+                        return
+                    dbg(f"{address} | {who}->{'remote' if who=='client' else 'client'} ({len(d)}b): {hexpreview(d)}")
                     (remote if s is client_socket else client_socket).sendall(d)
-                except: return
-    except: pass
+                except Exception as ex:
+                    dbg(f"{address} | excepcion en relay ({who}): {ex}")
+                    return
+    except Exception as ex:
+        dbg(f"{address} | EXCEPCION en handler: {ex}\n{traceback.format_exc()}")
     finally:
         try: client_socket.close()
         except: pass
@@ -327,6 +381,31 @@ PDEOF
 
     echo -e "  ${GREEN}✓ pdirect.py instalado${NC}"
     echo -e "  ${GREEN}✓ Dropbear SSH activo en puerto 2222${NC}"
+}
+
+# ── Instalar Falcon Proxy v1.2-RustFast (binario local del repo) ─
+_install_falconproxy() {
+    echo -e "${CYAN}[2/4] Instalando falconproxy (v1.2-RustFast)...${NC}"
+
+    # El binario viaja junto a este script dentro del repo (script/Server/falconproxy)
+    local SCRIPT_DIR
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local LOCAL_SRC="$SCRIPT_DIR/falconproxy"
+
+    if [[ -f /usr/local/bin/falconproxy ]]; then
+        echo -e "  ${GREEN}✓ falconproxy ya estaba instalado en /usr/local/bin${NC}"
+    elif [[ -f "$LOCAL_SRC" ]]; then
+        cp "$LOCAL_SRC" /usr/local/bin/falconproxy
+        chmod +x /usr/local/bin/falconproxy
+        setcap 'cap_net_bind_service=+ep' /usr/local/bin/falconproxy 2>/dev/null
+        echo -e "  ${GREEN}✓ falconproxy copiado a /usr/local/bin${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ No se encontró el binario falconproxy junto al script ($LOCAL_SRC).${NC}"
+        echo -e "  ${YELLOW}  Usando pdirect.py como fallback.${NC}"
+        PROXY_MODE="pdirect"
+        _install_pdirect
+        return
+    fi
 }
 
 # ── Instalar binario FalconTunnel de FirewallFalcon (modo Rust) ─
@@ -495,11 +574,11 @@ change_mode() {
     echo ""
     echo -e " ${CYAN}[*] Reinstalando con modo: $PROXY_MODE...${NC}"
 
-    if [[ "$PROXY_MODE" == "falcontunnel" ]]; then
-        _install_falcontunnel_binary
-    else
-        _install_pdirect
-    fi
+    case "$PROXY_MODE" in
+        falcontunnel) _install_falcontunnel_binary ;;
+        falconproxy)  _install_falconproxy ;;
+        *)            _install_pdirect ;;
+    esac
 
     _create_systemd_service
     save_config
