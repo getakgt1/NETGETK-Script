@@ -99,6 +99,51 @@ menu_falcon_proxy() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#   Liberar puertos ocupados por el nginx-default sin configurar
+#   (caso muy comun en VPS nuevos: el server block "default_server"
+#   que trae Ubuntu de fabrica, sin usar, escuchando en el 80)
+# ═══════════════════════════════════════════════════════════════
+_free_port_conflicts() {
+    local ports="$1"
+    local port pid_line procname handled_nginx=0
+
+    for port in $ports; do
+        pid_line=$(ss -tlnp 2>/dev/null | grep -E ":${port}[[:space:]]" | head -1)
+        [[ -z "$pid_line" ]] && continue
+
+        procname=$(echo "$pid_line" | grep -oP '(?<=users:\(\(")[^"]+' | head -1)
+
+        if [[ "$procname" == "nginx" ]]; then
+            # Solo tocamos nginx si el bloque que ocupa el puerto es el
+            # default_server sin modificar (root /var/www/html). Si el
+            # admin ya configuro algo real ahi, NO lo tocamos.
+            if [[ $handled_nginx -eq 0 ]] && \
+               nginx -T 2>/dev/null | grep -A30 "listen ${port} default_server" | grep -q "root /var/www/html"; then
+                echo -e "  ${YELLOW}⚠ Puerto $port ocupado por el nginx-default sin configurar. Liberando...${NC}"
+                if [[ -L /etc/nginx/sites-enabled/default ]]; then
+                    rm -f /etc/nginx/sites-enabled/default
+                    nginx -t >/dev/null 2>&1 && systemctl restart nginx 2>/dev/null
+                    handled_nginx=1
+                    sleep 1
+                    if ss -tlnp 2>/dev/null | grep -qE ":${port}[[:space:]].*nginx"; then
+                        echo -e "  ${RED}⚠ nginx sigue en el puerto $port tras el intento automatico.${NC}"
+                        echo -e "  ${RED}  Revisa manualmente: nginx -T | grep -B2 'listen ${port}'${NC}"
+                    else
+                        echo -e "  ${GREEN}✓ Puerto $port liberado (nginx-default desactivado)${NC}"
+                    fi
+                fi
+            else
+                echo -e "  ${RED}⚠ Puerto $port ocupado por nginx, pero con un site configurado (no es el default vacio).${NC}"
+                echo -e "  ${RED}  No lo toco automaticamente para no romper nada. Libera el puerto a mano o elige otro puerto.${NC}"
+            fi
+        elif [[ -n "$procname" ]]; then
+            echo -e "  ${RED}⚠ Puerto $port ya esta en uso por '${procname}'. El servicio Falcon Proxy va a fallar al iniciar.${NC}"
+            echo -e "  ${RED}  Detenlo, libera el puerto, o elige otro puerto distinto.${NC}"
+        fi
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════
 #   [1] INSTALAR / CONFIGURAR PUERTOS
 # ═══════════════════════════════════════════════════════════════
 install_falcon_proxy() {
@@ -159,6 +204,9 @@ install_falcon_proxy() {
         falconproxy)  _install_falconproxy ;;
         *)            _install_pdirect ;;
     esac
+
+    # ── Liberar conflictos de puerto antes de arrancar ────────
+    _free_port_conflicts "$PROXY_PORTS"
 
     # ── Crear servicio systemd ────────────────────────────────
     echo -e "${CYAN}[3/4] Configurando servicio systemd...${NC}"
@@ -625,6 +673,8 @@ change_mode() {
         falconproxy)  _install_falconproxy ;;
         *)            _install_pdirect ;;
     esac
+
+    _free_port_conflicts "$PROXY_PORTS"
 
     _create_systemd_service
     save_config
