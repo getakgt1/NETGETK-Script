@@ -41,6 +41,7 @@ menu_xray() {
     echo -e " ${WHITE}[10]${NC} Ver logs Xray"
     echo -e " ${WHITE}[11]${NC} ${GREEN}Guardar config actual como plantilla${NC}"
     echo -e " ${WHITE}[12]${NC} ${CYAN}Aplicar plantilla guardada${NC}"
+    echo -e " ${WHITE}[13]${NC} ${GREEN}Agregar inbound adicional (puerto/host independiente)${NC}"
     echo ""
     echo -e " ${WHITE}[0]${NC} ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -52,6 +53,7 @@ menu_xray() {
         9) systemctl restart xray; echo -e "${GREEN}[+] Xray reiniciado${NC}"; sleep 1; menu_xray ;;
         10) journalctl -u xray -n 30 --no-pager; press_enter; menu_xray ;;
         11) save_current_as_template ;; 12) apply_saved_template ;;
+        13) add_xray_inbound ;;
         0) return ;; *) menu_xray ;;
     esac
 }
@@ -135,7 +137,7 @@ setup_vless() {
         *) NETWORK="splithttp" ;;
     esac
 
-    HOST_HEADER=""; SERVICE_NAME=""; WS_PATH="/"
+    HOSTS_INPUT=""; SERVICE_NAME=""; WS_PATH="/"
     if [[ "$NETWORK" == "grpc" ]]; then
         echo -ne " ${WHITE}Service Name gRPC (ej. grpc-service): ${NC}"; read SERVICE_NAME
         [[ -z "$SERVICE_NAME" ]] && SERVICE_NAME="grpc-service"
@@ -143,8 +145,14 @@ setup_vless() {
         echo -ne " ${WHITE}Path (ej. /): ${NC}"; read WS_PATH
         [[ -z "$WS_PATH" ]] && WS_PATH="/"
         [[ "${WS_PATH:0:1}" != "/" ]] && WS_PATH="/$WS_PATH"
-        echo -ne " ${WHITE}Host de camuflaje (dominio, opcional — Enter para omitir): ${NC}"; read HOST_HEADER
+        echo -ne " ${WHITE}Host(s) de camuflaje, separados por espacio (opcional — Enter para omitir): ${NC}"
+        read HOSTS_INPUT
     fi
+    # array con todos los hosts escritos; el primero se usa en el config
+    # del inbound, pero como Xray no valida el Host contra el que declara,
+    # cualquiera de ellos funciona igual contra el mismo backend.
+    read -ra HOSTS_ARR <<< "$HOSTS_INPUT"
+    HOST_HEADER="${HOSTS_ARR[0]:-}"
 
     UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
     mkdir -p /usr/local/etc/xray
@@ -187,22 +195,38 @@ PYEOF
     ufw allow "$VLESS_PORT/tcp" 2>/dev/null
     sed -i '/^XRAY_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
     echo "XRAY_PORT=$VLESS_PORT" >> $INSTALL_DIR/config.conf
+    sed -i '/^XRAY_HOSTS=/d' $INSTALL_DIR/config.conf 2>/dev/null
+    echo "XRAY_HOSTS=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
+    sed -i "/^XRAY_HOSTS_${VLESS_PORT}=/d" $INSTALL_DIR/config.conf 2>/dev/null
+    echo "XRAY_HOSTS_${VLESS_PORT}=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
     systemctl enable xray 2>/dev/null; systemctl restart xray
     if systemctl is-active --quiet xray; then
-        LINK=$(python3 -c "
+        echo ""; echo -e "${GREEN}[+] VLESS configurado (transporte: $NETWORK)${NC}"
+        echo -e "${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
+        echo -e "${WHITE}Link(s):${NC}"
+        if [[ "$NETWORK" != "grpc" && ${#HOSTS_ARR[@]} -gt 0 ]]; then
+            for H in "${HOSTS_ARR[@]}"; do
+                LINK=$(python3 -c "
 import urllib.parse
-network = '$NETWORK'; path = urllib.parse.quote('$WS_PATH'); host = '$HOST_HEADER'; svc = urllib.parse.quote('$SERVICE_NAME')
+path = urllib.parse.quote('$WS_PATH')
+h = '$H'
+print(f'vless://$UUID@$VPS_IP:$VLESS_PORT?encryption=none&security=none&type=$NETWORK&path={path}&host=' + urllib.parse.quote(h) + f'#{h}-GTKVPN')
+")
+                echo -e "  ${CYAN}$LINK${NC}"
+            done
+        else
+            LINK=$(python3 -c "
+import urllib.parse
+network = '$NETWORK'; path = urllib.parse.quote('$WS_PATH'); svc = urllib.parse.quote('$SERVICE_NAME')
 base = f'vless://$UUID@$VPS_IP:$VLESS_PORT?encryption=none&security=none&type={network}'
 if network in ('ws', 'splithttp'):
     base += f'&path={path}'
-    if host: base += f'&host={urllib.parse.quote(host)}'
 elif network == 'grpc':
     base += f'&serviceName={svc}'
 print(base + '#admin-GTKVPN')
 ")
-        echo ""; echo -e "${GREEN}[+] VLESS configurado (transporte: $NETWORK)${NC}"
-        echo -e "${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
-        echo -e "${WHITE}Link:${NC} ${CYAN}$LINK${NC}"
+            echo -e "  ${CYAN}$LINK${NC}"
+        fi
         mkdir -p $INSTALL_DIR/users
         printf "USERNAME=admin\nUUID=%s\nTYPE=xray-vless-%s\nCREATED=%s\nEXPIRY=9999-12-31\n" "$UUID" "$NETWORK" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/admin_xray.info"
     else
@@ -290,6 +314,130 @@ with open('$XRAY_CONFIG', 'w') as f:
     fi
     press_enter; menu_xray
 }
+# ── Agregar un inbound VLESS adicional e independiente (nuevo puerto,   ─
+# ── transporte y host propios) SIN tocar los inbounds que ya existen. ──
+add_xray_inbound() {
+    echo ""; echo -e "${CYAN}[ AGREGAR INBOUND ADICIONAL (independiente) ]${NC}"; echo ""
+    if ! check_config; then press_enter; menu_xray; return; fi
+
+    echo -ne " ${WHITE}Puerto nuevo (debe ser distinto a los existentes): ${NC}"; read NEW_PORT
+    if [[ -z "$NEW_PORT" ]]; then
+        echo -e "${RED}[!] Cancelado.${NC}"; press_enter; menu_xray; return
+    fi
+    PORT_TAKEN=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); print('yes' if any(str(i.get('port'))=='$NEW_PORT' for i in c.get('inbounds',[])) else 'no')" 2>/dev/null)
+    if [[ "$PORT_TAKEN" == "yes" ]]; then
+        echo -e "${RED}[!] Ese puerto ya esta en uso por otro inbound de este mismo Xray.${NC}"
+        press_enter; menu_xray; return
+    fi
+
+    echo ""
+    echo -e " ${WHITE}Tipo de transporte:${NC}"
+    echo -e "   ${CYAN}[1]${NC} ws"
+    echo -e "   ${CYAN}[2]${NC} splithttp"
+    echo -e "   ${CYAN}[3]${NC} grpc"
+    echo -ne " ${WHITE}► Transporte (Enter = splithttp): ${NC}"; read NET_OPT
+    case "$NET_OPT" in
+        1) NETWORK="ws" ;;
+        3) NETWORK="grpc" ;;
+        *) NETWORK="splithttp" ;;
+    esac
+
+    HOSTS_INPUT=""; SERVICE_NAME=""; WS_PATH="/"
+    if [[ "$NETWORK" == "grpc" ]]; then
+        echo -ne " ${WHITE}Service Name gRPC (ej. grpc-service): ${NC}"; read SERVICE_NAME
+        [[ -z "$SERVICE_NAME" ]] && SERVICE_NAME="grpc-service"
+    else
+        echo -ne " ${WHITE}Path (ej. /): ${NC}"; read WS_PATH
+        [[ -z "$WS_PATH" ]] && WS_PATH="/"
+        [[ "${WS_PATH:0:1}" != "/" ]] && WS_PATH="/$WS_PATH"
+        echo -ne " ${WHITE}Host(s) de camuflaje, separados por espacio (opcional): ${NC}"; read HOSTS_INPUT
+    fi
+    read -ra HOSTS_ARR <<< "$HOSTS_INPUT"
+    HOST_HEADER="${HOSTS_ARR[0]:-}"
+
+    echo -ne " ${WHITE}Nombre de usuario para este inbound (ej. admin2): ${NC}"; read USERNAME
+    [[ -z "$USERNAME" ]] && USERNAME="admin"
+
+    NEW_UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
+
+    RESULT=$(python3 - "$XRAY_CONFIG" "$NEW_PORT" "$NEW_UUID" "$NETWORK" "$WS_PATH" "$HOST_HEADER" "$SERVICE_NAME" "${USERNAME}@gtkvpn" << 'PYEOF'
+import json, sys
+cfg, port, uuid, network, path, host, svc, email = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8]
+with open(cfg) as f:
+    config = json.load(f)
+
+stream = {"network": network}
+if network == "ws":
+    ws = {"path": path}
+    if host:
+        ws["headers"] = {"Host": host}
+    stream["wsSettings"] = ws
+elif network == "splithttp":
+    sh = {"path": path}
+    if host:
+        sh["host"] = host
+    stream["splithttpSettings"] = sh
+elif network == "grpc":
+    stream["grpcSettings"] = {"serviceName": svc}
+
+tag = f"vless-{network}-{port}"
+config.setdefault("inbounds", []).append({
+    "port": port, "listen": "0.0.0.0", "protocol": "vless",
+    "settings": {"clients": [{"id": uuid, "flow": "", "email": email}], "decryption": "none"},
+    "streamSettings": stream,
+    "sniffing": {"enabled": False},
+    "tag": tag
+})
+with open(cfg, "w") as f:
+    json.dump(config, f, indent=2)
+print("OK")
+PYEOF
+)
+    if [[ "$RESULT" != "OK" ]]; then
+        echo -e "${RED}[!] Error al agregar el inbound.${NC}"; press_enter; menu_xray; return
+    fi
+
+    ufw allow "$NEW_PORT/tcp" 2>/dev/null
+    sed -i "/^XRAY_HOSTS_${NEW_PORT}=/d" $INSTALL_DIR/config.conf 2>/dev/null
+    echo "XRAY_HOSTS_${NEW_PORT}=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
+
+    systemctl restart xray
+    if systemctl is-active --quiet xray; then
+        echo ""; echo -e "${GREEN}[+] Inbound adicional creado en puerto $NEW_PORT (transporte: $NETWORK)${NC}"
+        echo -e "${WHITE}Los inbounds anteriores siguen activos sin cambios.${NC}"
+        echo -e "${WHITE}UUID:${NC} ${YELLOW}$NEW_UUID${NC}"
+        echo -e "${WHITE}Link(s):${NC}"
+        if [[ "$NETWORK" != "grpc" && ${#HOSTS_ARR[@]} -gt 0 ]]; then
+            for H in "${HOSTS_ARR[@]}"; do
+                LINK=$(python3 -c "
+import urllib.parse
+path = urllib.parse.quote('$WS_PATH')
+h = '$H'
+print(f'vless://$NEW_UUID@$VPS_IP:$NEW_PORT?encryption=none&security=none&type=$NETWORK&path={path}&host=' + urllib.parse.quote(h) + f'#${USERNAME}-{h}-GTKVPN')
+")
+                echo -e "  ${CYAN}$LINK${NC}"
+            done
+        else
+            LINK=$(python3 -c "
+import urllib.parse
+network = '$NETWORK'; path = urllib.parse.quote('$WS_PATH'); svc = urllib.parse.quote('$SERVICE_NAME')
+base = f'vless://$NEW_UUID@$VPS_IP:$NEW_PORT?encryption=none&security=none&type={network}'
+if network in ('ws', 'splithttp'):
+    base += f'&path={path}'
+elif network == 'grpc':
+    base += f'&serviceName={svc}'
+print(base + '#${USERNAME}-GTKVPN')
+")
+            echo -e "  ${CYAN}$LINK${NC}"
+        fi
+        mkdir -p $INSTALL_DIR/users
+        printf "USERNAME=%s\nUUID=%s\nTYPE=xray-vless-%s\nCREATED=%s\nEXPIRY=9999-12-31\n" "$USERNAME" "$NEW_UUID" "$NETWORK" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/${USERNAME}_xray.info"
+    else
+        echo -e "${RED}[!] Error iniciando Xray con el nuevo inbound. Revisa: journalctl -u xray -n 20${NC}"
+        echo -e "${YELLOW}    (el inbound quedo agregado en config.json; revisa que el puerto no choque con otro servicio)${NC}"
+    fi
+    press_enter; menu_xray
+}
 setup_vmess() {
     echo ""; echo -e "${CYAN}[ AGREGAR VMESS ]${NC}"; echo ""
     if ! check_config; then press_enter; menu_xray; return; fi
@@ -333,9 +481,23 @@ PYEOF
 add_xray_user() {
     echo ""; echo -e "${CYAN}[ AGREGAR USUARIO VLESS ]${NC}"; echo ""
     if ! check_config; then press_enter; menu_xray; return; fi
-    VLESS_EXISTS=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); print('yes' if any(i.get('protocol')=='vless' for i in c.get('inbounds',[])) else 'no')" 2>/dev/null)
-    if [[ "$VLESS_EXISTS" != "yes" ]]; then
+    VLESS_PORTS=($(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i['port']) for i in c.get('inbounds',[]) if i.get('protocol')=='vless']" 2>/dev/null))
+    if [[ ${#VLESS_PORTS[@]} -eq 0 ]]; then
         echo -e "${RED}[!] No hay inbound VLESS. Usa Opcion 2 primero.${NC}"; press_enter; menu_xray; return
+    fi
+    TARGET_PORT="${VLESS_PORTS[0]}"
+    if [[ ${#VLESS_PORTS[@]} -gt 1 ]]; then
+        echo -e "${WHITE}Hay varios inbounds VLESS activos:${NC}"
+        local i=1
+        for p in "${VLESS_PORTS[@]}"; do
+            NET=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('network','ws')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$p]" 2>/dev/null | head -1)
+            echo "  [$i] puerto $p ($NET)"
+            ((i++))
+        done
+        echo -ne " ${WHITE}► ¿A cual agregar el usuario? (Enter = puerto ${VLESS_PORTS[0]}): ${NC}"; read PORT_IDX
+        if [[ -n "$PORT_IDX" && "$PORT_IDX" =~ ^[0-9]+$ && "$PORT_IDX" -ge 1 && "$PORT_IDX" -le ${#VLESS_PORTS[@]} ]]; then
+            TARGET_PORT="${VLESS_PORTS[$((PORT_IDX-1))]}"
+        fi
     fi
     echo -ne " ${WHITE}Nombre del usuario (ej. user1): ${NC}"; read USERNAME
     [[ -z "$USERNAME" ]] && { echo -e "${RED}[!] Cancelado.${NC}"; press_enter; menu_xray; return; }
@@ -349,12 +511,12 @@ print('yes' if '${USERNAME}@gtkvpn' in emails else 'no')
         echo -e "${RED}[!] Usuario '${USERNAME}' ya existe.${NC}"; press_enter; menu_xray; return
     fi
     NEW_UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
-    RESULT=$(python3 - "$XRAY_CONFIG" "$NEW_UUID" "${USERNAME}@gtkvpn" << 'PYEOF'
+    RESULT=$(python3 - "$XRAY_CONFIG" "$NEW_UUID" "${USERNAME}@gtkvpn" "$TARGET_PORT" << 'PYEOF'
 import json, sys
-cfg, uid, email = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg, uid, email, port = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 with open(cfg) as f: config = json.load(f)
 for ib in config.get('inbounds',[]):
-    if ib.get('protocol') == 'vless':
+    if ib.get('protocol') == 'vless' and ib.get('port') == port:
         ib.setdefault('settings',{}).setdefault('clients',[]).append({"id":uid,"flow":"","email":email})
         with open(cfg,'w') as f: json.dump(config, f, indent=2)
         print("OK"); break
@@ -365,10 +527,42 @@ PYEOF
         echo -e "${RED}[!] Error al agregar usuario.${NC}"; press_enter; menu_xray; return
     fi
     systemctl restart xray
-    VLESS_PORT=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i['port']) for i in c.get('inbounds',[]) if i.get('protocol')=='vless']" 2>/dev/null | head -1)
-    WS_PATH=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('wsSettings',{}).get('path','/')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless']" 2>/dev/null | head -1)
-    WS_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WS_PATH'))")
-    LINK="vless://${NEW_UUID}@${VPS_IP}:${VLESS_PORT}?type=ws&encryption=none&path=${WS_ENC}&security=none#${USERNAME}-GTKVPN"
+    VLESS_PORT="$TARGET_PORT"
+    NETWORK=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('network','ws')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$TARGET_PORT]" 2>/dev/null | head -1)
+    case "$NETWORK" in
+        splithttp) WS_PATH=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('splithttpSettings',{}).get('path','/')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$TARGET_PORT]" 2>/dev/null | head -1) ;;
+        grpc)      SERVICE_NAME=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('grpcSettings',{}).get('serviceName','')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$TARGET_PORT]" 2>/dev/null | head -1) ;;
+        *)         WS_PATH=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('wsSettings',{}).get('path','/')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$TARGET_PORT]" 2>/dev/null | head -1) ;;
+    esac
+
+    # Reutiliza los hosts guardados para ESE puerto especifico (Opcion 2/13);
+    # si no hay entrada por-puerto, cae al XRAY_HOSTS generico (config original)
+    SAVED_HOSTS=$(grep "^XRAY_HOSTS_${TARGET_PORT}=" $INSTALL_DIR/config.conf 2>/dev/null | cut -d= -f2-)
+    [[ -z "$SAVED_HOSTS" ]] && SAVED_HOSTS=$(grep "^XRAY_HOSTS=" $INSTALL_DIR/config.conf 2>/dev/null | cut -d= -f2-)
+    read -ra HOSTS_ARR <<< "$SAVED_HOSTS"
+
+    LINKS=()
+    if [[ "$NETWORK" != "grpc" && ${#HOSTS_ARR[@]} -gt 0 ]]; then
+        for H in "${HOSTS_ARR[@]}"; do
+            LINKS+=("$(python3 -c "
+import urllib.parse
+path = urllib.parse.quote('$WS_PATH')
+h = '$H'
+print(f'vless://$NEW_UUID@$VPS_IP:$VLESS_PORT?encryption=none&security=none&type=$NETWORK&path={path}&host=' + urllib.parse.quote(h) + f'#${USERNAME}-{h}-GTKVPN')
+")")
+        done
+    else
+        LINKS+=("$(python3 -c "
+import urllib.parse
+network = '$NETWORK'; path = urllib.parse.quote('$WS_PATH'); svc = urllib.parse.quote('$SERVICE_NAME')
+base = f'vless://$NEW_UUID@$VPS_IP:$VLESS_PORT?encryption=none&security=none&type={network}'
+if network in ('ws', 'splithttp'):
+    base += f'&path={path}'
+elif network == 'grpc':
+    base += f'&serviceName={svc}'
+print(base + '#${USERNAME}-GTKVPN')
+")")
+    fi
     echo ""; echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║         USUARIO AGREGADO EXITOSAMENTE ✓                  ║${NC}"
     echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
@@ -376,7 +570,10 @@ PYEOF
     echo -e "${GREEN}║${NC} ${WHITE}UUID:${NC}    ${YELLOW}${NEW_UUID}${NC}"
     echo -e "${GREEN}║${NC} ${WHITE}Puerto:${NC}  ${CYAN}${VLESS_PORT}${NC}"
     echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║${NC} ${WHITE}Link VLESS:${NC}"; echo -e " ${CYAN}$LINK${NC}"
+    echo -e "${GREEN}║${NC} ${WHITE}Link(s) VLESS:${NC}"
+    for LINK in "${LINKS[@]}"; do
+        echo -e " ${CYAN}$LINK${NC}"
+    done
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
     mkdir -p $INSTALL_DIR/users
     printf "USERNAME=%s\nUUID=%s\nTYPE=xray-vless\nCREATED=%s\nEXPIRY=9999-12-31\n" "$USERNAME" "$NEW_UUID" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/${USERNAME}_xray.info"
