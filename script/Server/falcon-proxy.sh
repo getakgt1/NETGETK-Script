@@ -201,15 +201,18 @@ _install_pdirect() {
     cat > /usr/local/bin/pdirect.py << 'PDEOF'
 #!/usr/bin/python3
 # pdirect.py — Falcon Proxy: SSH WebSocket compatible con HTTP Custom / NapsternetV
-import socket, threading, sys, select, time, traceback, binascii
+import socket, threading, sys, select, time, traceback, binascii, os
 
 REMOTE_ADDR = "127.0.0.1"
 BUFFER_SIZE = 65536
 HTTP_METHODS = [b"GET ", b"POST ", b"PUT ", b"CONNECT ", b"HTTP", b"OPTI", b"HEAD"]
 
 DEBUG_LOG = "/var/log/falcon-proxy-debug.log"
+DEBUG_FLAG = "/etc/gtkvpn/falcon-proxy-debug"
 
 def dbg(msg):
+    if not os.path.exists(DEBUG_FLAG):
+        return
     try:
         with open(DEBUG_LOG, "a") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
@@ -220,6 +223,15 @@ def hexpreview(b, n=120):
     return binascii.hexlify(b[:n]).decode()
 
 def get_ssh_port():
+    # Preferir siempre dropbear en 2222 (el backend que instala este mismo
+    # script) — un SSH_PORT viejo/incorrecto en config.conf no debe pisar
+    # esto, ya que dropbear en 2222 es justo lo que falcon-proxy necesita.
+    try:
+        s = socket.create_connection(("127.0.0.1", 2222), timeout=1)
+        s.close()
+        return 2222
+    except:
+        pass
     try:
         with open("/etc/gtkvpn/config.conf") as f:
             for line in f:
@@ -227,13 +239,6 @@ def get_ssh_port():
                     return int(line.strip().split("=")[1])
     except:
         pass
-    for port in [2222, 22]:
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=1)
-            s.close()
-            return port
-        except:
-            pass
     return 22
 
 REMOTE_PORT = get_ssh_port()
@@ -379,8 +384,49 @@ PDEOF
     systemctl enable dropbear 2>/dev/null
     systemctl restart dropbear 2>/dev/null
 
+    _install_dropbear_legacy
+
     echo -e "  ${GREEN}✓ pdirect.py instalado${NC}"
     echo -e "  ${GREEN}✓ Dropbear SSH activo en puerto 2222${NC}"
+}
+
+# ── Compilar dropbear legacy 2017.75 (compatibilidad con clientes SSH ──
+# ── viejos tipo HTTP Custom/HTTP Injector, que fallan con las           ─
+# ── extensiones anti-Terrapin de dropbear moderno) ──────────────────────
+_install_dropbear_legacy() {
+    if /usr/sbin/dropbear -h 2>&1 | head -1 | grep -q "2017.75"; then
+        echo -e "  ${GREEN}✓ dropbear legacy 2017.75 ya estaba instalado${NC}"
+        return
+    fi
+    echo -e "  ${CYAN}→ Compilando dropbear 2017.75 (compat. clientes SSH legacy)...${NC}"
+    apt-get install -y build-essential libz-dev wget -qq 2>/dev/null
+
+    local BUILD_DIR="/usr/src/dropbear-2017.75"
+    if [[ ! -f "$BUILD_DIR/dropbear" ]]; then
+        mkdir -p /usr/src && cd /usr/src
+        if [[ ! -d "$BUILD_DIR" ]]; then
+            wget -q https://matt.ucc.asn.au/dropbear/releases/dropbear-2017.75.tar.bz2 \
+                -O dropbear-2017.75.tar.bz2 2>/dev/null
+            if [[ ! -s dropbear-2017.75.tar.bz2 ]]; then
+                echo -e "  ${YELLOW}⚠ No se pudo descargar dropbear 2017.75. Se mantiene la version del sistema.${NC}"
+                return
+            fi
+            tar xjf dropbear-2017.75.tar.bz2
+        fi
+        cd "$BUILD_DIR"
+        ./configure >/dev/null 2>&1
+        make PROGRAMS="dropbear dbclient dropbearkey dropbearconvert" -j"$(nproc)" >/dev/null 2>&1
+    fi
+
+    if [[ -f "$BUILD_DIR/dropbear" ]]; then
+        systemctl stop dropbear 2>/dev/null
+        cp "$BUILD_DIR/dropbear" /usr/sbin/dropbear
+        systemctl start dropbear 2>/dev/null
+        echo -e "  ${GREEN}✓ dropbear reemplazado por build legacy 2017.75${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ No se pudo compilar dropbear legacy. Se mantiene la version del sistema${NC}"
+        echo -e "  ${YELLOW}  (clientes SSH viejos podrian fallar con 'Cannot read full block, EOF').${NC}"
+    fi
 }
 
 # ── Instalar Falcon Proxy v1.2-RustFast (binario local del repo) ─
