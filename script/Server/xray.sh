@@ -30,7 +30,7 @@ menu_xray() {
     echo -e " ${WHITE}Puerto actual:${NC} ${CYAN}$XRAY_PORT${NC}"
     echo ""
     echo -e " ${WHITE}[1]${NC} Instalar/Reinstalar Xray"
-    echo -e " ${WHITE}[2]${NC} Configurar VLESS + WebSocket"
+    echo -e " ${WHITE}[2]${NC} Configurar VLESS (elegir transporte: ws / splithttp / grpc)"
     echo -e " ${WHITE}[3]${NC} Configurar VMess + WebSocket"
     echo -e " ${WHITE}[4]${NC} Ver config actual"
     echo -e " ${WHITE}[5]${NC} Ver usuarios registrados"
@@ -39,6 +39,8 @@ menu_xray() {
     echo -e " ${WHITE}[8]${NC} ${CYAN}Aplicar configuracion manual${NC}"
     echo -e " ${WHITE}[9]${NC} Reiniciar Xray"
     echo -e " ${WHITE}[10]${NC} Ver logs Xray"
+    echo -e " ${WHITE}[11]${NC} ${GREEN}Guardar config actual como plantilla${NC}"
+    echo -e " ${WHITE}[12]${NC} ${CYAN}Aplicar plantilla guardada${NC}"
     echo ""
     echo -e " ${WHITE}[0]${NC} ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -49,6 +51,7 @@ menu_xray() {
         7) delete_xray_user ;; 8) apply_manual_config ;;
         9) systemctl restart xray; echo -e "${GREEN}[+] Xray reiniciado${NC}"; sleep 1; menu_xray ;;
         10) journalctl -u xray -n 30 --no-pager; press_enter; menu_xray ;;
+        11) save_current_as_template ;; 12) apply_saved_template ;;
         0) return ;; *) menu_xray ;;
     esac
 }
@@ -111,7 +114,7 @@ install_xray() {
     fi
 }
 setup_vless() {
-    echo ""; echo -e "${CYAN}[ CONFIGURAR VLESS + WebSocket ]${NC}"; echo ""
+    echo ""; echo -e "${CYAN}[ CONFIGURAR VLESS ]${NC}"; echo ""
     if [[ -f "$XRAY_CONFIG" ]]; then
         echo -e "${YELLOW}[!] Ya existe config con usuarios. Sobreescribir y perder todo? (s/n): ${NC}"
         read -r OVW
@@ -119,39 +122,171 @@ setup_vless() {
     fi
     echo -ne " ${WHITE}Puerto VLESS (ej. 8081): ${NC}"; read VLESS_PORT
     [[ -z "$VLESS_PORT" ]] && VLESS_PORT=8081
-    echo -ne " ${WHITE}Path WebSocket (ej. /): ${NC}"; read WS_PATH
-    [[ -z "$WS_PATH" ]] && WS_PATH="/"
-    [[ "${WS_PATH:0:1}" != "/" ]] && WS_PATH="/$WS_PATH"
-    UUID=$(uuidgen); VPS_IP=$(curl -s --max-time 5 ifconfig.me)
+
+    echo ""
+    echo -e " ${WHITE}Tipo de transporte:${NC}"
+    echo -e "   ${CYAN}[1]${NC} ws         — WebSocket clasico"
+    echo -e "   ${CYAN}[2]${NC} splithttp  — mejor evasion DPI (recomendado)"
+    echo -e "   ${CYAN}[3]${NC} grpc       — menos comun, mas overhead"
+    echo -ne " ${WHITE}► Transporte (Enter = splithttp): ${NC}"; read NET_OPT
+    case "$NET_OPT" in
+        1) NETWORK="ws" ;;
+        3) NETWORK="grpc" ;;
+        *) NETWORK="splithttp" ;;
+    esac
+
+    HOST_HEADER=""; SERVICE_NAME=""; WS_PATH="/"
+    if [[ "$NETWORK" == "grpc" ]]; then
+        echo -ne " ${WHITE}Service Name gRPC (ej. grpc-service): ${NC}"; read SERVICE_NAME
+        [[ -z "$SERVICE_NAME" ]] && SERVICE_NAME="grpc-service"
+    else
+        echo -ne " ${WHITE}Path (ej. /): ${NC}"; read WS_PATH
+        [[ -z "$WS_PATH" ]] && WS_PATH="/"
+        [[ "${WS_PATH:0:1}" != "/" ]] && WS_PATH="/$WS_PATH"
+        echo -ne " ${WHITE}Host de camuflaje (dominio, opcional — Enter para omitir): ${NC}"; read HOST_HEADER
+    fi
+
+    UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
     mkdir -p /usr/local/etc/xray
-    cat > "$XRAY_CONFIG" <<XCONF
-{
-  "log": {"loglevel":"warning","access":"/var/log/xray/access.log","error":"/var/log/xray/error.log"},
-  "inbounds": [
-    {
-      "port": $VLESS_PORT, "listen": "0.0.0.0", "protocol": "vless",
-      "settings": {"clients": [{"id": "$UUID","flow": "","email": "admin@gtkvpn"}],"decryption": "none"},
-      "streamSettings": {"network": "ws","wsSettings": {"path": "$WS_PATH","headers": {}}},"tag": "vless-ws"
-    }
-  ],
-  "outbounds": [{"protocol":"freedom","tag":"direct"},{"protocol":"blackhole","tag":"block"}],
-  "routing": {"rules": [{"type":"field","ip":["geoip:private"],"outboundTag":"block"}]}
+
+    python3 - "$XRAY_CONFIG" "$VLESS_PORT" "$UUID" "$NETWORK" "$WS_PATH" "$HOST_HEADER" "$SERVICE_NAME" << 'PYEOF'
+import json, sys
+cfg, port, uuid, network, path, host, svc = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
+
+stream = {"network": network}
+if network == "ws":
+    ws = {"path": path}
+    if host:
+        ws["headers"] = {"Host": host}
+    stream["wsSettings"] = ws
+elif network == "splithttp":
+    sh = {"path": path}
+    if host:
+        sh["host"] = host
+    stream["splithttpSettings"] = sh
+elif network == "grpc":
+    stream["grpcSettings"] = {"serviceName": svc}
+
+config = {
+    "log": {"loglevel": "warning", "access": "/var/log/xray/access.log", "error": "/var/log/xray/error.log"},
+    "inbounds": [{
+        "port": port, "listen": "0.0.0.0", "protocol": "vless",
+        "settings": {"clients": [{"id": uuid, "flow": "", "email": "admin@gtkvpn"}], "decryption": "none"},
+        "streamSettings": stream,
+        "sniffing": {"enabled": False},
+        "tag": "vless-" + network
+    }],
+    "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}],
+    "routing": {"rules": [{"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}]}
 }
-XCONF
+with open(cfg, "w") as f:
+    json.dump(config, f, indent=2)
+print("OK")
+PYEOF
+
     ufw allow "$VLESS_PORT/tcp" 2>/dev/null
     sed -i '/^XRAY_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
     echo "XRAY_PORT=$VLESS_PORT" >> $INSTALL_DIR/config.conf
     systemctl enable xray 2>/dev/null; systemctl restart xray
     if systemctl is-active --quiet xray; then
-        WS_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WS_PATH'))")
-        LINK="vless://${UUID}@${VPS_IP}:${VLESS_PORT}?type=ws&encryption=none&path=${WS_ENC}&security=none#admin-GTKVPN"
-        echo ""; echo -e "${GREEN}[+] VLESS configurado${NC}"
+        LINK=$(python3 -c "
+import urllib.parse
+network = '$NETWORK'; path = urllib.parse.quote('$WS_PATH'); host = '$HOST_HEADER'; svc = urllib.parse.quote('$SERVICE_NAME')
+base = f'vless://$UUID@$VPS_IP:$VLESS_PORT?encryption=none&security=none&type={network}'
+if network in ('ws', 'splithttp'):
+    base += f'&path={path}'
+    if host: base += f'&host={urllib.parse.quote(host)}'
+elif network == 'grpc':
+    base += f'&serviceName={svc}'
+print(base + '#admin-GTKVPN')
+")
+        echo ""; echo -e "${GREEN}[+] VLESS configurado (transporte: $NETWORK)${NC}"
         echo -e "${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
         echo -e "${WHITE}Link:${NC} ${CYAN}$LINK${NC}"
         mkdir -p $INSTALL_DIR/users
-        printf "USERNAME=admin\nUUID=%s\nTYPE=xray-vless\nCREATED=%s\nEXPIRY=9999-12-31\n" "$UUID" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/admin_xray.info"
+        printf "USERNAME=admin\nUUID=%s\nTYPE=xray-vless-%s\nCREATED=%s\nEXPIRY=9999-12-31\n" "$UUID" "$NETWORK" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/admin_xray.info"
     else
         echo -e "${RED}[!] Error iniciando Xray:${NC}"; journalctl -u xray -n 10 --no-pager
+    fi
+    press_enter; menu_xray
+}
+
+# ── Guardar la config actual (ya funcionando) como plantilla reutilizable ─
+# El puerto y el UUID se reemplazan por marcadores, para poder aplicarla
+# en cualquier otro VPS pidiendo solo un puerto nuevo.
+save_current_as_template() {
+    echo ""; echo -e "${CYAN}[ GUARDAR CONFIG ACTUAL COMO PLANTILLA ]${NC}"; echo ""
+    if ! check_config; then press_enter; menu_xray; return; fi
+    echo -ne " ${WHITE}Nombre para la plantilla (ej. splithttp-tekmob): ${NC}"; read TPL_NAME
+    [[ -z "$TPL_NAME" ]] && TPL_NAME="template-$(date +%s)"
+    TPL_NAME=$(echo "$TPL_NAME" | tr -cd 'a-zA-Z0-9_-')
+    mkdir -p "$INSTALL_DIR/xray-templates"
+    python3 -c "
+import json
+with open('$XRAY_CONFIG') as f:
+    c = json.load(f)
+for ib in c.get('inbounds', []):
+    ib['port'] = '__PORT__'
+    for cl in ib.get('settings', {}).get('clients', []):
+        cl['id'] = '__UUID__'
+with open('$INSTALL_DIR/xray-templates/${TPL_NAME}.json', 'w') as f:
+    json.dump(c, f, indent=2)
+"
+    echo -e "${GREEN}[+] Plantilla '${TPL_NAME}' guardada en $INSTALL_DIR/xray-templates/${NC}"
+    echo -e "${CYAN}    Podras aplicarla en este u otro VPS desde la Opcion 12.${NC}"
+    press_enter; menu_xray
+}
+
+# ── Aplicar una plantilla previamente guardada, con puerto/UUID nuevos ─
+apply_saved_template() {
+    echo ""; echo -e "${CYAN}[ APLICAR PLANTILLA GUARDADA ]${NC}"; echo ""
+    mkdir -p "$INSTALL_DIR/xray-templates"
+    TEMPLATES=("$INSTALL_DIR"/xray-templates/*.json)
+    if [[ ! -e "${TEMPLATES[0]}" ]]; then
+        echo -e "${YELLOW}No hay plantillas guardadas todavia.${NC}"
+        echo -e "${YELLOW}Usa la Opcion 11 (o pega una config que funcione con la Opcion 8 y luego guardala).${NC}"
+        press_enter; menu_xray; return
+    fi
+    echo -e "${WHITE}Plantillas disponibles:${NC}"
+    local i=1
+    for t in "${TEMPLATES[@]}"; do
+        echo "  [$i] $(basename "$t" .json)"
+        ((i++))
+    done
+    echo -ne " ${WHITE}► Elige numero: ${NC}"; read TPL_IDX
+    SELECTED="${TEMPLATES[$((TPL_IDX-1))]}"
+    if [[ ! -f "$SELECTED" ]]; then
+        echo -e "${RED}[!] Opcion invalida.${NC}"; press_enter; menu_xray; return
+    fi
+    echo -ne " ${WHITE}Puerto a usar (Enter = 8081): ${NC}"; read APPLY_PORT
+    [[ -z "$APPLY_PORT" ]] && APPLY_PORT=8081
+    UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
+    mkdir -p /usr/local/etc/xray
+    [[ -f "$XRAY_CONFIG" ]] && cp "$XRAY_CONFIG" "${XRAY_CONFIG}.bak"
+    python3 -c "
+import json
+with open('$SELECTED') as f:
+    c = json.load(f)
+for ib in c.get('inbounds', []):
+    ib['port'] = $APPLY_PORT
+    for cl in ib.get('settings', {}).get('clients', []):
+        cl['id'] = '$UUID'
+with open('$XRAY_CONFIG', 'w') as f:
+    json.dump(c, f, indent=2)
+"
+    ufw allow "$APPLY_PORT/tcp" 2>/dev/null
+    sed -i '/^XRAY_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
+    echo "XRAY_PORT=$APPLY_PORT" >> $INSTALL_DIR/config.conf
+    systemctl enable xray 2>/dev/null; systemctl restart xray
+    if systemctl is-active --quiet xray; then
+        echo -e "${GREEN}[+] Plantilla aplicada correctamente.${NC}"
+        echo -e "${WHITE}Puerto:${NC} ${CYAN}$APPLY_PORT${NC}  ${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
+        mkdir -p $INSTALL_DIR/users
+        printf "USERNAME=admin\nUUID=%s\nTYPE=xray-vless-template\nCREATED=%s\nEXPIRY=9999-12-31\n" "$UUID" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/admin_xray.info"
+    else
+        echo -e "${RED}[!] Error iniciando Xray con la plantilla. Restaurando config anterior...${NC}"
+        [[ -f "${XRAY_CONFIG}.bak" ]] && cp "${XRAY_CONFIG}.bak" "$XRAY_CONFIG" && systemctl restart xray
+        journalctl -u xray -n 10 --no-pager
     fi
     press_enter; menu_xray
 }
@@ -163,7 +298,7 @@ setup_vmess() {
     echo -ne " ${WHITE}Path WebSocket (ej. /vmess): ${NC}"; read WS_PATH
     [[ -z "$WS_PATH" ]] && WS_PATH="/vmess"
     [[ "${WS_PATH:0:1}" != "/" ]] && WS_PATH="/$WS_PATH"
-    UUID=$(uuidgen); VPS_IP=$(curl -s --max-time 5 ifconfig.me)
+    UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
     python3 - "$XRAY_CONFIG" "$VMESS_PORT" "$UUID" "$WS_PATH" << 'PYEOF'
 import json, sys
 cfg, port, uuid, wspath = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -213,7 +348,7 @@ print('yes' if '${USERNAME}@gtkvpn' in emails else 'no')
     if [[ "$EXISTS" == "yes" ]]; then
         echo -e "${RED}[!] Usuario '${USERNAME}' ya existe.${NC}"; press_enter; menu_xray; return
     fi
-    NEW_UUID=$(uuidgen); VPS_IP=$(curl -s --max-time 5 ifconfig.me)
+    NEW_UUID=$(uuidgen); VPS_IP=$(curl -4 -s --max-time 5 ifconfig.me); [[ "$VPS_IP" == *:* ]] && VPS_IP="[$VPS_IP]"
     RESULT=$(python3 - "$XRAY_CONFIG" "$NEW_UUID" "${USERNAME}@gtkvpn" << 'PYEOF'
 import json, sys
 cfg, uid, email = sys.argv[1], sys.argv[2], sys.argv[3]
