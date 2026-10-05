@@ -229,12 +229,25 @@ app.get('/api/users', requireAuth, (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// El nombre de usuario se usa en comandos de shell (useradd, pkill, passwd)
+// y en rutas de archivo: solo letras, números, guion y guion bajo, igual que
+// usuarios.sh.
+const USERNAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+app.param('username', (req, res, next, username) => {
+    if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Nombre de usuario inválido' });
+    next();
+});
+
 app.post('/api/users/create', requireAuth, (req, res) => {
     const { username, password, days, type, xray_transport, xray_host, xray_path, xray_port } = req.body;
     if (!username || (!password && type !== 'xray')) return res.status(400).json({ error: 'Datos incompletos' });
+    if (!USERNAME_RE.test(username))
+        return res.status(400).json({ error: 'Usuario: solo letras, números, guion y guion bajo' });
+    let dias = parseInt(days || 30, 10);
+    if (isNaN(dias) || dias < 1 || dias > 365) dias = 30;
 
     const expiry = new Date();
-    expiry.setDate(expiry.getDate() + parseInt(days || 30));
+    expiry.setDate(expiry.getDate() + dias);
     const expiryStr = expiry.toISOString().split('T')[0];
 
     try {
@@ -303,7 +316,8 @@ app.post('/api/users/create', requireAuth, (req, res) => {
 
             fs.mkdirSync(USERS_DIR, { recursive: true });
             fs.writeFileSync(path.join(USERS_DIR, `${username}_xray.info`),
-                `USERNAME=${username}\nUUID=${uuid}\nTYPE=xray\nTRANSPORT=${transport}\nHOST=${host}\nPATH=${usePath}\nPORT=${port}\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`);
+                `USERNAME=${username}\nUUID=${uuid}\nTYPE=xray\nTRANSPORT=${transport}\nHOST=${host}\nPATH=${usePath}\nPORT=${port}\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\n`,
+                { mode: 0o600 });
 
             // Generar JSON cliente completo
             const clientJson = JSON.stringify({
@@ -338,7 +352,8 @@ app.post('/api/users/create', requireAuth, (req, res) => {
             
             fs.mkdirSync(USERS_DIR, { recursive: true });
             fs.writeFileSync(path.join(USERS_DIR, `${username}.info`),
-                `USERNAME=${username}\nPASSWORD=${password}\nTYPE=ssh\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\nDIAS=${days || 30}\n`);
+                `USERNAME=${username}\nPASSWORD=${password}\nTYPE=ssh\nCREATED=${new Date().toISOString().split('T')[0]}\nEXPIRY=${expiryStr}\nDIAS=${dias}\nLIMIT=0\n`,
+                { mode: 0o600 });   // guarda la contraseña: solo root
             
             return res.json({ ok: true });
         }
@@ -574,41 +589,6 @@ app.post('/api/users/:username/renew', requireAuth, (req, res) => {
         fs.writeFileSync(infoFile, newContent);
 
         res.json({ ok: true, expiry: newExpiry });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── LIMITE DE CONEXIONES ──────────────────────────────────────
-app.post('/api/users/:username/limit', requireAuth, (req, res) => {
-    const { username } = req.params;
-    const { limit } = req.body;
-    const lv = parseInt(limit);
-    if (isNaN(lv) || lv < 0) return res.status(400).json({ error: 'Limite invalido' });
-    try {
-        const infoFile = path.join(USERS_DIR, username + '.info');
-        if (!fs.existsSync(infoFile))
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-
-        // Leer y actualizar archivo .info
-        const uconf = {};
-        fs.readFileSync(infoFile, 'utf8').split('\n').forEach(line => {
-            const idx = line.indexOf('=');
-            if (idx > 0) uconf[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-        });
-        uconf.LIMIT = lv;
-        const newContent = Object.entries(uconf)
-            .filter(([k]) => k)
-            .map(([k, v]) => k + '=' + v)
-            .join('\n') + '\n';
-        fs.writeFileSync(infoFile, newContent);
-
-        // Aplicar limite via PAM
-        const limitsFile = '/etc/security/limits.d/gtkvpn.conf';
-        let lc = fs.existsSync(limitsFile) ? fs.readFileSync(limitsFile, 'utf8') : '';
-        lc = lc.split('\n').filter(l => l && !l.startsWith(username + ' ')).join('\n');
-        if (lv > 0) lc += '\n' + username + ' hard maxlogins ' + lv + '\n';
-        fs.writeFileSync(limitsFile, lc);
-
-        res.json({ ok: true, limit: lv });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

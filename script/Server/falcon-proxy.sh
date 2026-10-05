@@ -136,6 +136,31 @@ _free_port_conflicts() {
                 echo -e "  ${RED}⚠ Puerto $port ocupado por nginx, pero con un site configurado (no es el default vacio).${NC}"
                 echo -e "  ${RED}  No lo toco automaticamente para no romper nada. Libera el puerto a mano o elige otro puerto.${NC}"
             fi
+        elif [[ "$procname" == "zh4x" && -f /etc/zh4x/config.env ]]; then
+            # ZH4X (bhttp-server) toma el 80 por defecto pero NO responde el
+            # handshake WebSocket: los payloads via Cloudflare dan error 520.
+            # Se mueve a otro puerto libre en vez de detenerlo, asi sigue
+            # funcionando para quien lo use.
+            local cand alt=""
+            for cand in 8080 8880 2086 2052; do
+                [[ " $ports " == *" $cand "* ]] && continue
+                ss -tlnH "sport = :$cand" 2>/dev/null | grep -q . && continue
+                alt=$cand; break
+            done
+            if [[ -n "$alt" ]]; then
+                echo -e "  ${YELLOW}⚠ Puerto $port ocupado por ZH4X. Moviendolo al puerto $alt...${NC}"
+                sed -i "s/^BHTTP_PORT=.*/BHTTP_PORT=$alt/" /etc/zh4x/config.env
+                systemctl restart bhttp-server 2>/dev/null
+                ufw allow "$alt/tcp" comment "ZH4X" >/dev/null 2>&1
+                sleep 1
+                if ss -tlnp 2>/dev/null | grep -qE ":${port}[[:space:]].*zh4x"; then
+                    echo -e "  ${RED}⚠ ZH4X sigue en el puerto $port. Cambialo a mano en /etc/zh4x/config.env${NC}"
+                else
+                    echo -e "  ${GREEN}✓ Puerto $port liberado (ZH4X ahora en $alt)${NC}"
+                fi
+            else
+                echo -e "  ${RED}⚠ Puerto $port ocupado por ZH4X y no hay puerto alternativo libre.${NC}"
+            fi
         elif [[ -n "$procname" ]]; then
             echo -e "  ${RED}⚠ Puerto $port ya esta en uso por '${procname}'. El servicio Falcon Proxy va a fallar al iniciar.${NC}"
             echo -e "  ${RED}  Detenlo, libera el puerto, o elige otro puerto distinto.${NC}"
