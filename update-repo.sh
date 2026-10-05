@@ -58,6 +58,7 @@ copy_file "$INSTALL_DIR/Server/dnstt-http.sh" "$REPO_DIR/script/Server/dnstt-htt
 copy_file "$INSTALL_DIR/Server/socks5.sh"     "$REPO_DIR/script/Server/socks5.sh"
 copy_file "$INSTALL_DIR/Server/xray.sh"       "$REPO_DIR/script/Server/xray.sh"
 copy_file "$INSTALL_DIR/back/usuarios.sh"     "$REPO_DIR/script/back/usuarios.sh"
+copy_file "$INSTALL_DIR/back/conexiones.sh"   "$REPO_DIR/script/back/conexiones.sh"
 copy_file "$INSTALL_DIR/back/firewall.sh"     "$REPO_DIR/script/back/firewall.sh"
 copy_file "$INSTALL_DIR/back/contador.sh"     "$REPO_DIR/script/back/contador.sh"
 copy_file "$INSTALL_DIR/back/optimizador.sh"  "$REPO_DIR/script/back/optimizador.sh"

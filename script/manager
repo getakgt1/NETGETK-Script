@@ -240,6 +240,7 @@ menu_update() {
                 ["script/manager"]="$INSTALL_DIR/manager"
                 ["script/banner.sh"]="$INSTALL_DIR/banner.sh"
                 ["script/back/usuarios.sh"]="$INSTALL_DIR/back/usuarios.sh"
+                ["script/back/conexiones.sh"]="$INSTALL_DIR/back/conexiones.sh"
                 ["script/back/contador.sh"]="$INSTALL_DIR/back/contador.sh"
                 ["script/back/optimizador.sh"]="$INSTALL_DIR/back/optimizador.sh"
                 ["script/back/firewall.sh"]="$INSTALL_DIR/back/firewall.sh"
@@ -252,6 +253,9 @@ menu_update() {
                 ["script/Server/dnstt-http.sh"]="$INSTALL_DIR/Server/dnstt-http.sh"
                 ["script/Server/udp.sh"]="$INSTALL_DIR/Server/udp.sh"
                 ["script/Server/vaydns.sh"]="$INSTALL_DIR/Server/vaydns.sh"
+                ["script/Server/falcon-proxy.sh"]="$INSTALL_DIR/Server/falcon-proxy.sh"
+                # pdirect.py ya cargado sigue corriendo; la versión nueva entra al reiniciar el servicio
+                ["script/Server/pdirect.py"]="/usr/local/bin/pdirect.py"
                 ["panel/server.js"]="$INSTALL_DIR/panel/server.js"
                 ["panel/public/index.html"]="$INSTALL_DIR/panel/public/index.html"
             )

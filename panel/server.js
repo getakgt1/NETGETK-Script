@@ -159,10 +159,8 @@ app.get('/api/overview', requireAuth, (req, res) => {
             sshws:    { active: svcStatus('ssh-ws'),         port: conf.SSH_WS_PORT || 'N/A' },
         };
 
-        // Usuarios SSH activos reales (who + procesos sshd autenticados)
-        const _sshWho   = parseInt(run('who 2>/dev/null | wc -l') || '0');
-        const _sshProcs = parseInt(run('ps aux 2>/dev/null | grep "sshd:" | grep -v "grep\|sshd -D\|sshd -R" | wc -l') || '0');
-        const sshActive = Math.max(_sshWho, _sshProcs);
+        // Conexiones SSH reales (todas las sesiones de usuarios, no root)
+        const sshActive = Object.values(liveConnections()).reduce((n, u) => n + (u.ssh || 0), 0);
 
         res.json({
             cpu, cores, ram: { total: ramTotal, used: ramUsed },
@@ -192,6 +190,15 @@ app.post('/api/service/:name/:action', requireAuth, (req, res) => {
     });
 });
 
+// Conexiones reales por usuario (SSH por sesión, Xray por IP), de
+// back/conexiones.sh. Antes a cada usuario se le sumaban TODAS las
+// conexiones de dropbear del servidor, así que todos salían conectados.
+function liveConnections() {
+    try {
+        return JSON.parse(run('bash /etc/gtkvpn/back/conexiones.sh --json 2>/dev/null') || '{}').users || {};
+    } catch (e) { return {}; }
+}
+
 // ── USUARIOS SSH ──────────────────────────────────────────────
 app.get('/api/users', requireAuth, (req, res) => {
     try {
@@ -199,11 +206,8 @@ app.get('/api/users', requireAuth, (req, res) => {
         if (!fs.existsSync(USERS_DIR)) return res.json([]);
         
         const today      = new Date().toISOString().split('T')[0];
-        const whoOut     = run('who 2>/dev/null');
-        const psOut      = run('ps aux 2>/dev/null');
-        const ssOut      = run('ss -tnp 2>/dev/null');
         const shadowOut  = run('cat /etc/shadow 2>/dev/null');
-        const dropbearTotal = (ssOut.match(/:2222.*dropbear/g) || []).length;
+        const live       = liveConnections();
         fs.readdirSync(USERS_DIR).forEach(file => {
             if (!file.endsWith('.info')) return;
             const conf = {};
@@ -217,11 +221,11 @@ app.get('/api/users', requireAuth, (req, res) => {
                 const shadowLine = shadowOut.split('\n').find(l => l.startsWith(conf.USERNAME + ':'));
                 const shadowHash = shadowLine ? shadowLine.split(':')[1] : '';
                 conf.blocked = shadowHash.startsWith('!') || shadowHash.startsWith('*');
-                const whoCount  = (whoOut.match(new RegExp('^' + conf.USERNAME + ' ', 'gm')) || []).length;
-                const sshdCount = (psOut.match(new RegExp('sshd: ' + conf.USERNAME + '[^/]', 'g')) || []).length;
-                const dropbearCount = (ssOut.match(new RegExp('dropbear.*' + conf.USERNAME, 'g')) || []).length;
-                conf.connected  = (whoCount + sshdCount + dropbearTotal + dropbearCount) > 0;
-                conf.connCount  = whoCount + Math.floor(sshdCount / 2) + dropbearTotal;
+                const lc        = live[conf.USERNAME];
+                conf.connCount  = lc ? lc.total : 0;
+                conf.connected  = conf.connCount > 0;
+                conf.connTypes  = lc ? lc.tipos : {};
+                conf.connIps    = lc ? lc.ips.length : 0;
                 users.push(conf);
             }
         });
