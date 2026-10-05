@@ -248,15 +248,55 @@ _install_pdirect() {
 
     cat > /usr/local/bin/pdirect.py << 'PDEOF'
 #!/usr/bin/python3
-# pdirect.py — Falcon Proxy: SSH WebSocket compatible con HTTP Custom / NapsternetV
-import socket, threading, sys, select, time, traceback, binascii, os
+"""pdirect.py — Falcon Proxy: SSH WebSocket compatible con HTTP Custom / NapsternetV.
+
+Version optimizada (GTKVPN). El handshake es el mismo de siempre: deteccion
+de payload HTTP, respuesta 101, banner SSH del backend y reenvio de lo que el
+cliente mande pegado despues de los headers. Lo que cambia es el rendimiento:
+
+1. os.splice(): los datos pasan de un socket al otro DENTRO del kernel, sin
+   copiarse a memoria de Python. Antes cada byte del tunel pasaba por el
+   interprete (y por el GIL), lo que limitaba el caudal a un solo nucleo.
+2. Varios procesos por puerto con SO_REUSEPORT: el kernel reparte las
+   conexiones entre todos (PDIRECT_WORKERS, por defecto un proceso por nucleo
+   hasta 4).
+3. TCP_NODELAY: sin esperas de Nagle, mucho menos latencia interactiva.
+4. Ya NO se cierra el tunel por inactividad. Antes se hacia
+   select(..., 300) y se cortaba la conexion si no habia datos por 5 minutos:
+   eso mataba el tunel cuando el telefono quedaba con la pantalla apagada.
+   Ahora los clientes muertos se detectan con keepalive de TCP.
+
+Uso: pdirect.py [puerto ...]   (por defecto 80)
+Debug opcional: touch /etc/gtkvpn/falcon-proxy-debug -> /var/log/falcon-proxy-debug.log
+"""
+import binascii
+import fcntl
+import os
+import signal
+import socket
+import sys
+import threading
+import time
+import traceback
 
 REMOTE_ADDR = "127.0.0.1"
 BUFFER_SIZE = 65536
+PIPE_SIZE = 1048576
+F_SETPIPE_SZ = 1031
 HTTP_METHODS = [b"GET ", b"POST ", b"PUT ", b"CONNECT ", b"HTTP", b"OPTI", b"HEAD"]
+WORKERS = int(os.environ.get("PDIRECT_WORKERS", "0")) or min(os.cpu_count() or 1, 4)
+
+# Keepalive: detecta al cliente que desaparecio sin cerrar (cambio de red,
+# telefono apagado) y libera el socket, en vez de dejarlo colgado.
+KEEPALIVE_IDLE = 120
+KEEPALIVE_INTVL = 30
+KEEPALIVE_CNT = 5
+
+HAS_SPLICE = hasattr(os, "splice")
 
 DEBUG_LOG = "/var/log/falcon-proxy-debug.log"
 DEBUG_FLAG = "/etc/gtkvpn/falcon-proxy-debug"
+
 
 def dbg(msg):
     if not os.path.exists(DEBUG_FLAG):
@@ -264,11 +304,13 @@ def dbg(msg):
     try:
         with open(DEBUG_LOG, "a") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-    except:
+    except Exception:
         pass
+
 
 def hexpreview(b, n=120):
     return binascii.hexlify(b[:n]).decode()
+
 
 def get_ssh_port():
     # Preferir siempre dropbear en 2222 (el backend que instala este mismo
@@ -278,21 +320,37 @@ def get_ssh_port():
         s = socket.create_connection(("127.0.0.1", 2222), timeout=1)
         s.close()
         return 2222
-    except:
+    except Exception:
         pass
     try:
         with open("/etc/gtkvpn/config.conf") as f:
             for line in f:
                 if line.startswith("SSH_PORT="):
                     return int(line.strip().split("=")[1])
-    except:
+    except Exception:
         pass
     return 22
 
-REMOTE_PORT = get_ssh_port()
+
+# PDIRECT_REMOTE_PORT solo se usa para probar el relay contra un servidor de
+# prueba; en produccion no se define.
+REMOTE_PORT = int(os.environ.get("PDIRECT_REMOTE_PORT", "0")) or get_ssh_port()
+
 
 def is_http(data):
     return any(data.startswith(m) for m in HTTP_METHODS)
+
+
+def tune(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, KEEPALIVE_IDLE)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, KEEPALIVE_INTVL)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, KEEPALIVE_CNT)
+    except OSError:
+        pass
+
 
 def read_payload(sock):
     data = b""
@@ -300,124 +358,195 @@ def read_payload(sock):
     try:
         while True:
             chunk = sock.recv(BUFFER_SIZE)
-            if not chunk: break
+            if not chunk:
+                break
             data += chunk
-            if b"\r\n\r\n" in data or b"\n\n" in data: break
-            if len(data) >= 4 and not is_http(data): break
-    except: pass
+            if b"\r\n\r\n" in data or b"\n\n" in data:
+                break
+            if len(data) >= 4 and not is_http(data):
+                break
+    except Exception:
+        pass
     sock.settimeout(None)
     return data
+
+
+def leftover_after_headers(data, address):
+    # Cualquier byte que haya llegado pegado despues del \r\n\r\n
+    # (el arranque real del handshake SSH del cliente) NO debe
+    # descartarse: hay que reenviarlo al backend. Ademas, algunos
+    # payloads no traen \r\n\r\n en absoluto pero SI llevan pegada
+    # la linea de identificacion SSH ("SSH-2.0-...") del cliente
+    # en el mismo bloque inicial -> hay que detectarla tambien.
+    sep_idx, sep_len = data.find(b"\r\n\r\n"), 4
+    if sep_idx == -1:
+        sep_idx, sep_len = data.find(b"\n\n"), 2
+    if sep_idx != -1:
+        leftover = data[sep_idx + sep_len:]
+        dbg(f"{address} | leftover tras headers ({len(leftover)}b): {hexpreview(leftover)}")
+        return leftover
+    ssh_idx = data.find(b"SSH-")
+    if ssh_idx != -1:
+        dbg(f"{address} | identificacion SSH embebida en data, offset {ssh_idx}")
+        return data[ssh_idx:]
+    dbg(f"{address} | no se encontro separador ni identificacion SSH en data")
+    return b""
+
+
+def pump_splice(src, dst):
+    """Mueve datos src->dst sin pasar por espacio de usuario."""
+    r, w = os.pipe()
+    try:
+        try:
+            fcntl.fcntl(w, F_SETPIPE_SZ, PIPE_SIZE)
+        except OSError:
+            pass
+        sfd, dfd = src.fileno(), dst.fileno()
+        while True:
+            n = os.splice(sfd, w, PIPE_SIZE)
+            if n == 0:
+                return
+            while n > 0:
+                m = os.splice(r, dfd, n)
+                if m == 0:
+                    return
+                n -= m
+    except OSError:
+        return
+    finally:
+        os.close(r)
+        os.close(w)
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def pump_copy(src, dst):
+    """Respaldo si splice no esta disponible: copia clasica."""
+    try:
+        while True:
+            d = src.recv(BUFFER_SIZE)
+            if not d:
+                return
+            dst.sendall(d)
+    except OSError:
+        return
+    finally:
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+pump = pump_splice if HAS_SPLICE else pump_copy
+
 
 def handler(client_socket, address):
     remote = None
     try:
+        tune(client_socket)
         data = read_payload(client_socket)
         dbg(f"--- new conn {address} | initial data ({len(data)}b): {hexpreview(data, 400)}")
         if not data:
-            dbg(f"{address} | sin datos iniciales, cerrando")
-            client_socket.close(); return
+            return
         remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote.connect((REMOTE_ADDR, REMOTE_PORT))
-        remote.settimeout(300)
-        client_socket.settimeout(300)
+        tune(remote)
+
         if is_http(data):
             remote.settimeout(5)
+            banner = b""
             try:
                 banner = remote.recv(BUFFER_SIZE)
             except Exception as ex:
                 dbg(f"{address} | error leyendo banner remoto: {ex}")
-                banner = b""
-            remote.settimeout(300)
-            dbg(f"{address} | banner remoto ({len(banner)}b): {hexpreview(banner)}")
+            remote.settimeout(None)
             client_socket.sendall(
-                b"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
-                b"Upgrade: WebSocket\r\n"
-                b"Connection: Upgrade\r\n\r\n"
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
             )
             if banner:
                 client_socket.sendall(banner)
-            # Cualquier byte que haya llegado pegado despues del \r\n\r\n
-            # (el arranque real del handshake SSH del cliente) NO debe
-            # descartarse: hay que reenviarlo al backend. Ademas, algunos
-            # payloads no traen \r\n\r\n en absoluto pero SI llevan pegada
-            # la linea de identificacion SSH ("SSH-2.0-...") del cliente
-            # en el mismo bloque inicial -> hay que detectarla tambien.
-            leftover = b""
-            sep_idx = data.find(b"\r\n\r\n")
-            sep_len = 4
-            if sep_idx == -1:
-                sep_idx = data.find(b"\n\n")
-                sep_len = 2
-            if sep_idx != -1:
-                leftover = data[sep_idx + sep_len:]
-                dbg(f"{address} | leftover tras headers ({len(leftover)}b): {hexpreview(leftover)}")
-            else:
-                ssh_idx = data.find(b"SSH-")
-                if ssh_idx != -1:
-                    leftover = data[ssh_idx:]
-                    dbg(f"{address} | identificacion SSH embebida en data, "
-                        f"extrayendo desde offset {ssh_idx} ({len(leftover)}b): {hexpreview(leftover)}")
-                else:
-                    dbg(f"{address} | no se encontro separador ni identificacion SSH en data")
+            leftover = leftover_after_headers(data, address)
             if leftover:
                 remote.sendall(leftover)
         else:
             dbg(f"{address} | data no-HTTP, reenviando directo a remoto")
             remote.sendall(data)
-        sockets = [client_socket, remote]
-        while True:
-            r, _, e = select.select(sockets, [], sockets, 300)
-            if e:
-                dbg(f"{address} | select devolvio error-sockets, cerrando")
-                break
-            if not r:
-                dbg(f"{address} | select timeout (300s) sin actividad")
-                break
-            for s in r:
-                who = "client" if s is client_socket else "remote"
-                try:
-                    d = s.recv(BUFFER_SIZE)
-                    if not d:
-                        dbg(f"{address} | {who} cerro la conexion (recv vacio)")
-                        return
-                    dbg(f"{address} | {who}->{'remote' if who=='client' else 'client'} ({len(d)}b): {hexpreview(d)}")
-                    (remote if s is client_socket else client_socket).sendall(d)
-                except Exception as ex:
-                    dbg(f"{address} | excepcion en relay ({who}): {ex}")
-                    return
+
+        # Un hilo por sentido. Los dos se bloquean dentro del kernel
+        # (splice libera el GIL), asi que el trafico ya no depende de que
+        # el interprete de Python llegue a atenderlo.
+        t = threading.Thread(target=pump, args=(client_socket, remote), daemon=True)
+        t.start()
+        pump(remote, client_socket)
+        t.join(30)
     except Exception as ex:
         dbg(f"{address} | EXCEPCION en handler: {ex}\n{traceback.format_exc()}")
     finally:
-        try: client_socket.close()
-        except: pass
-        try:
-            if remote: remote.close()
-        except: pass
+        for s in (client_socket, remote):
+            try:
+                if s:
+                    s.close()
+            except Exception:
+                pass
 
-def main(ports):
-    threads = []
-    for port in ports:
-        def listen(p=port):
-            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind(("0.0.0.0", int(p)))
-            server.listen(256)
-            print(f"[falcon-proxy] Puerto {p} → SSH {REMOTE_ADDR}:{REMOTE_PORT}", flush=True)
-            while True:
-                try:
-                    c, a = server.accept()
-                    threading.Thread(target=handler, args=(c, a), daemon=True).start()
-                except Exception as ex:
-                    print(f"[error] {ex}", flush=True)
-        t = threading.Thread(target=listen, daemon=True)
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
+
+def listen(port):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    server.bind(("0.0.0.0", int(port)))
+    server.listen(4096)
+    return server
+
+
+def accept_loop(server):
+    while True:
+        try:
+            c, a = server.accept()
+            threading.Thread(target=handler, args=(c, a), daemon=True).start()
+        except Exception as ex:
+            print(f"[error] {ex}", flush=True)
+
+
+def serve(ports):
+    # Cada proceso escucha en todos los puertos; SO_REUSEPORT reparte.
+    servers = [listen(p) for p in ports]
+    print(f"[falcon-proxy] pid={os.getpid()} puertos {' '.join(map(str, ports))} -> "
+          f"SSH {REMOTE_ADDR}:{REMOTE_PORT} splice={HAS_SPLICE}", flush=True)
+    for s in servers[1:]:
+        threading.Thread(target=accept_loop, args=(s,), daemon=True).start()
+    accept_loop(servers[0])
+
+
+def main(ports, workers=WORKERS):
+    threading.stack_size(512 * 1024)
+    children = []
+    for _ in range(max(0, workers - 1)):
+        pid = os.fork()
+        if pid == 0:
+            try:
+                serve(ports)
+            finally:
+                os._exit(0)
+        children.append(pid)
+
+    def bye(*_):
+        for p in children:
+            try:
+                os.kill(p, signal.SIGTERM)
+            except OSError:
+                pass
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, bye)
+    signal.signal(signal.SIGINT, bye)
+    serve(ports)
+
 
 if __name__ == "__main__":
-    ports = sys.argv[1:] if len(sys.argv) > 1 else [80]
-    main(ports)
+    main(sys.argv[1:] if len(sys.argv) > 1 else [80])
 PDEOF
 
     chmod +x /usr/local/bin/pdirect.py
@@ -565,6 +694,7 @@ User=$RUN_USER
 ExecStart=$EXEC_CMD
 Restart=always
 RestartSec=5
+LimitNOFILE=1048576
 StandardOutput=journal
 StandardError=journal
 
