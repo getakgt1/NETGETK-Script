@@ -976,7 +976,7 @@ async function loadUsers() {
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           ${u.connected
-            ? `<span class="status-dot status-on"></span><small style="color:var(--green)">${u.connCount||1}</small>`
+            ? `<span class="status-dot status-on"></span><small title="${Object.entries(u.connTypes||{}).map(([k,v])=>k+': '+v).join(', ')}${u.connIps?' · '+u.connIps+' IPs':''}" style="color:var(--green)">${u.connCount}</small>`
             : `<span class="status-dot status-off"></span>`}
           <span class="badge ${u.expired?'badge-expired':(u.blocked?'badge-blocked':'badge-active')}" style="font-size:10px">
             ${u.expired?'Exp':(u.blocked?'Bloq':'Activo')}
@@ -1008,7 +1008,7 @@ async function loadUsers() {
         ${u.expired?'Exp':(u.blocked?'Bloq':'Activo')}</span></td>
       <td style="text-align:center">
         ${u.connected
-          ? `<span class="status-dot status-on"></span><small style="color:var(--green);margin-left:3px">${u.connCount||1}</small>`
+          ? `<span class="status-dot status-on"></span><small title="${Object.entries(u.connTypes||{}).map(([k,v])=>k+': '+v).join(', ')}${u.connIps?' · '+u.connIps+' IPs':''}" style="color:var(--green);margin-left:3px">${u.connCount}</small>`
           : `<span class="status-dot status-off"></span>`}
       </td>
       <td class="hide-mobile" style="text-align:center;min-width:60px">

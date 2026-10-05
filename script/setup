@@ -147,6 +147,7 @@ SCRIPTS=(
     "Server/falcon-proxy.sh"
     "Server/falconproxy"
     "back/usuarios.sh"
+    "back/conexiones.sh"
     "back/contador.sh"
     "back/optimizador.sh"
     "back/firewall.sh"
