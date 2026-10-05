@@ -57,6 +57,38 @@ log_action() {
 # --------- VALIDAR DÍAS ---------------------------------------------------------------------------------------------------------------------------------------
 # BUG FIX: El script original no validaba que DIAS sea un número
 # Podía recibir texto vacío o no numérico y romper la fecha
+# Dropbear NO cambia de usuario en los túneles sin terminal: la sesión sigue
+# corriendo como root y "pkill -u usuario" no la ve, así que un usuario
+# borrado o vencido seguía navegando hasta desconectarse. El PID de cada
+# sesión sale del log de dropbear ("[PID] ... auth succeeded for 'usuario'");
+# se toma el ÚLTIMO usuario autenticado en cada PID para no cortar a otro si
+# el número de proceso se reutilizó.
+cerrar_sesiones_dropbear() {
+    local u="$1" p
+    for p in $( { journalctl -u dropbear -b -o cat --no-pager 2>/dev/null; cat /var/log/auth.log 2>/dev/null | grep dropbear; } \
+        | awk -v u="'$u'" '
+            match($0, /\[[0-9]+\]/) { pid = substr($0, RSTART + 1, RLENGTH - 2) }
+            /auth succeeded for/ { for (i = 1; i <= NF; i++) if ($i == "for") last[pid] = $(i + 1) }
+            END { for (p in last) if (last[p] == u) print p }'); do
+        [[ -r /proc/$p/comm && "$(cat /proc/$p/comm 2>/dev/null)" == "dropbear" ]] || continue
+        [[ "$(awk '/^PPid/{print $2}' /proc/$p/status 2>/dev/null)" != "1" ]] || continue   # nunca el proceso principal
+        kill "$p" 2>/dev/null
+    done
+}
+
+# Cierra las sesiones del usuario y borra la cuenta. pkill solo pide el
+# cierre (SIGTERM) y userdel falla si queda algún proceso vivo, así que se
+# espera y se fuerza; devuelve error si la cuenta sigue existiendo.
+borrar_cuenta() {
+    local u="$1" i
+    cerrar_sesiones_dropbear "$u"
+    pkill -u "$u" 2>/dev/null
+    for i in 1 2 3 4 5; do pgrep -u "$u" >/dev/null 2>&1 || break; sleep 1; done
+    pkill -KILL -u "$u" 2>/dev/null; sleep 0.5
+    userdel -r "$u" 2>/dev/null || userdel "$u" 2>/dev/null
+    ! id "$u" &>/dev/null
+}
+
 validar_dias() {
     local dias="$1"
     [[ -z "$dias" ]] && dias=30
@@ -166,8 +198,10 @@ delete_ssh() {
         echo -e "${RED}[!] Usuario no existe${NC}"; press_enter; return
     fi
 
-    pkill -u "$USERNAME" 2>/dev/null
-    userdel -r "$USERNAME" 2>/dev/null
+    if ! borrar_cuenta "$USERNAME"; then
+        echo -e "${RED}[!] No se pudo eliminar ${USERNAME} (¿sesión todavía abierta?). Intenta de nuevo.${NC}"
+        press_enter; return
+    fi
     rm -f "$USERS_DIR/${USERNAME}.info"
 
     # BUG FIX: El original no limpiaba limits.conf al borrar
@@ -389,7 +423,7 @@ list_users() {
     if [[ -d "$USERS_DIR" ]]; then
         for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
-            unset USERNAME TYPE EXPIRY LIMIT
+            unset USERNAME TYPE EXPIRY LIMIT UUID
             source "$f"; PATH="$SAFE_PATH"
 
             TODAY=$(date +%Y-%m-%d)
@@ -403,6 +437,14 @@ list_users() {
 
             if [[ "$EXPIRY_TS" -lt "$TODAY_TS" ]]; then
                 STATUS="${RED}EXPIRADO${NC}"
+            elif [[ "${TYPE:-ssh}" == "xray" ]]; then
+                # Xray no crea cuenta del sistema: está activo si su UUID
+                # sigue en la config de Xray.
+                if [[ -n "$UUID" ]] && grep -q "$UUID" "$XRAY_CONFIG" 2>/dev/null; then
+                    STATUS="${GREEN}ACTIVO${NC}"
+                else
+                    STATUS="${RED}ELIMINADO${NC}"
+                fi
             elif id "$USERNAME" &>/dev/null 2>/dev/null; then
                 if passwd -S "$USERNAME" 2>/dev/null | grep -q " L "; then
                     STATUS="${YELLOW}BLOQUEADO${NC}"
@@ -688,8 +730,9 @@ with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
                     fi
                 else
                     # SSH: matar sesiones y eliminar usuario del sistema
-                    pkill -u "$USERNAME" 2>/dev/null
-                    userdel "$USERNAME" 2>/dev/null
+                    # Si la cuenta no se pudo borrar, se conserva el .info
+                    # para reintentar en la próxima limpieza.
+                    borrar_cuenta "$USERNAME" || continue
                     sed -i "/^${USERNAME}[[:space:]]/d" /etc/security/limits.conf 2>/dev/null
                 fi
 
