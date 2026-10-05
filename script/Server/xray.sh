@@ -7,6 +7,34 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 INSTALL_DIR="/etc/gtkvpn"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
+
+# Contador de usuarios en línea (lo usa back/conexiones.sh): API local de
+# estadísticas en 127.0.0.1:10085 + statsUserOnline. Se reaplica antes de
+# cada reinicio para que reconfigurar Xray desde el menú no lo borre.
+ensure_xray_stats() {
+    [[ -s "$XRAY_CONFIG" ]] || return 0
+    python3 - "$XRAY_CONFIG" << 'PYSTATS' 2>/dev/null
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p))
+c["stats"] = {}
+c["api"] = {"tag": "api", "services": ["StatsService"]}
+c.setdefault("policy", {}).setdefault("levels", {}).setdefault("0", {})["statsUserOnline"] = True
+ibs = c.setdefault("inbounds", [])
+if not any(ib.get("tag") == "api" for ib in ibs):
+    ibs.insert(0, {"tag": "api", "listen": "127.0.0.1", "port": 10085,
+                   "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1"}})
+rules = c.setdefault("routing", {}).setdefault("rules", [])
+if not any(r.get("outboundTag") == "api" for r in rules):
+    rules.insert(0, {"type": "field", "inboundTag": ["api"], "outboundTag": "api"})
+json.dump(c, open(p, "w"), indent=2)
+PYSTATS
+}
+
+xray_restart() {
+    ensure_xray_stats
+    systemctl restart xray
+}
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter para continuar...${NC}"; read; }
 check_config() {
     if [[ ! -f "$XRAY_CONFIG" ]]; then
@@ -50,7 +78,7 @@ menu_xray() {
         1) install_xray ;; 2) setup_vless ;; 3) setup_vmess ;;
         4) view_config ;; 5) list_xray_users ;; 6) add_xray_user ;;
         7) delete_xray_user ;; 8) apply_manual_config ;;
-        9) systemctl restart xray; echo -e "${GREEN}[+] Xray reiniciado${NC}"; sleep 1; menu_xray ;;
+        9) xray_restart; echo -e "${GREEN}[+] Xray reiniciado${NC}"; sleep 1; menu_xray ;;
         10) journalctl -u xray -n 30 --no-pager; press_enter; menu_xray ;;
         11) save_current_as_template ;; 12) apply_saved_template ;;
         13) add_xray_inbound ;;
@@ -83,7 +111,7 @@ apply_manual_config() {
     [[ -f "$XRAY_CONFIG" ]] && cp "$XRAY_CONFIG" "${XRAY_CONFIG}.bak"
     mkdir -p /usr/local/etc/xray
     echo "$JSON_INPUT" > "$XRAY_CONFIG"
-    systemctl restart xray
+    xray_restart
     if systemctl is-active --quiet xray; then
         echo -e "${GREEN}[+] Configuracion aplicada y Xray reiniciado exitosamente.${NC}"
         echo ""
@@ -100,7 +128,7 @@ print(f"\nTotal: {idx-1} usuario(s)")
 PYEOF
     else
         echo -e "${RED}[!] Error iniciando Xray. Restaurando backup...${NC}"
-        [[ -f "${XRAY_CONFIG}.bak" ]] && cp "${XRAY_CONFIG}.bak" "$XRAY_CONFIG" && systemctl restart xray
+        [[ -f "${XRAY_CONFIG}.bak" ]] && cp "${XRAY_CONFIG}.bak" "$XRAY_CONFIG" && xray_restart
         journalctl -u xray -n 10 --no-pager
     fi
     press_enter; menu_xray
@@ -199,7 +227,7 @@ PYEOF
     echo "XRAY_HOSTS=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
     sed -i "/^XRAY_HOSTS_${VLESS_PORT}=/d" $INSTALL_DIR/config.conf 2>/dev/null
     echo "XRAY_HOSTS_${VLESS_PORT}=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
-    systemctl enable xray 2>/dev/null; systemctl restart xray
+    systemctl enable xray 2>/dev/null; xray_restart
     if systemctl is-active --quiet xray; then
         echo ""; echo -e "${GREEN}[+] VLESS configurado (transporte: $NETWORK)${NC}"
         echo -e "${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
@@ -250,6 +278,7 @@ import json
 with open('$XRAY_CONFIG') as f:
     c = json.load(f)
 for ib in c.get('inbounds', []):
+    if ib.get('tag') == 'api': continue
     ib['port'] = '__PORT__'
     for cl in ib.get('settings', {}).get('clients', []):
         cl['id'] = '__UUID__'
@@ -292,6 +321,7 @@ import json
 with open('$SELECTED') as f:
     c = json.load(f)
 for ib in c.get('inbounds', []):
+    if ib.get('tag') == 'api': continue
     ib['port'] = $APPLY_PORT
     for cl in ib.get('settings', {}).get('clients', []):
         cl['id'] = '$UUID'
@@ -301,7 +331,7 @@ with open('$XRAY_CONFIG', 'w') as f:
     ufw allow "$APPLY_PORT/tcp" 2>/dev/null
     sed -i '/^XRAY_PORT=/d' $INSTALL_DIR/config.conf 2>/dev/null
     echo "XRAY_PORT=$APPLY_PORT" >> $INSTALL_DIR/config.conf
-    systemctl enable xray 2>/dev/null; systemctl restart xray
+    systemctl enable xray 2>/dev/null; xray_restart
     if systemctl is-active --quiet xray; then
         echo -e "${GREEN}[+] Plantilla aplicada correctamente.${NC}"
         echo -e "${WHITE}Puerto:${NC} ${CYAN}$APPLY_PORT${NC}  ${WHITE}UUID:${NC} ${YELLOW}$UUID${NC}"
@@ -309,7 +339,7 @@ with open('$XRAY_CONFIG', 'w') as f:
         printf "USERNAME=admin\nUUID=%s\nTYPE=xray-vless-template\nCREATED=%s\nEXPIRY=9999-12-31\n" "$UUID" "$(date +%Y-%m-%d)" > "$INSTALL_DIR/users/admin_xray.info"
     else
         echo -e "${RED}[!] Error iniciando Xray con la plantilla. Restaurando config anterior...${NC}"
-        [[ -f "${XRAY_CONFIG}.bak" ]] && cp "${XRAY_CONFIG}.bak" "$XRAY_CONFIG" && systemctl restart xray
+        [[ -f "${XRAY_CONFIG}.bak" ]] && cp "${XRAY_CONFIG}.bak" "$XRAY_CONFIG" && xray_restart
         journalctl -u xray -n 10 --no-pager
     fi
     press_enter; menu_xray
@@ -401,7 +431,7 @@ PYEOF
     sed -i "/^XRAY_HOSTS_${NEW_PORT}=/d" $INSTALL_DIR/config.conf 2>/dev/null
     echo "XRAY_HOSTS_${NEW_PORT}=${HOSTS_INPUT}" >> $INSTALL_DIR/config.conf
 
-    systemctl restart xray
+    xray_restart
     if systemctl is-active --quiet xray; then
         echo ""; echo -e "${GREEN}[+] Inbound adicional creado en puerto $NEW_PORT (transporte: $NETWORK)${NC}"
         echo -e "${WHITE}Los inbounds anteriores siguen activos sin cambios.${NC}"
@@ -456,7 +486,7 @@ config['inbounds'].append({"port":port,"listen":"0.0.0.0","protocol":"vmess","se
 with open(cfg,'w') as f: json.dump(config, f, indent=2)
 print("OK")
 PYEOF
-    ufw allow "$VMESS_PORT/tcp" 2>/dev/null; systemctl restart xray
+    ufw allow "$VMESS_PORT/tcp" 2>/dev/null; xray_restart
     echo -e "${GREEN}[+] VMess en puerto $VMESS_PORT | UUID: ${CYAN}$UUID${NC}"
     press_enter; menu_xray
 }
@@ -526,7 +556,7 @@ PYEOF
     if [[ "$RESULT" != "OK" ]]; then
         echo -e "${RED}[!] Error al agregar usuario.${NC}"; press_enter; menu_xray; return
     fi
-    systemctl restart xray
+    xray_restart
     VLESS_PORT="$TARGET_PORT"
     NETWORK=$(python3 -c "import json; c=json.load(open('$XRAY_CONFIG')); [print(i.get('streamSettings',{}).get('network','ws')) for i in c.get('inbounds',[]) if i.get('protocol')=='vless' and i.get('port')==$TARGET_PORT]" 2>/dev/null | head -1)
     case "$NETWORK" in
@@ -611,7 +641,7 @@ else: print("NOTFOUND"); exit(1)
 PYEOF
 )
     if [[ "$RESULT" == "OK" ]]; then
-        systemctl restart xray
+        xray_restart
         echo -e "${GREEN}[+] '${DEL_EMAIL}' eliminado. Xray reiniciado.${NC}"
         rm -f "$INSTALL_DIR/users/$(echo $DEL_EMAIL | cut -d@ -f1)_xray.info" 2>/dev/null
     else

@@ -319,6 +319,12 @@ KEEPALIVE_CNT = 5
 
 HAS_SPLICE = hasattr(os, "splice")
 
+# Mapa de sesiones para el contador de conexiones (back/conexiones.sh): por
+# cada sesión reenviada se crea /run/pdirect/<puerto local hacia SSH> con la
+# IP:puerto real del cliente y el puerto de entrada. Vive en memoria (/run)
+# y se borra al cerrar la sesión.
+SESSION_DIR = "/run/pdirect"
+
 DEBUG_LOG = "/var/log/falcon-proxy-debug.log"
 DEBUG_FLAG = "/etc/gtkvpn/falcon-proxy-debug"
 
@@ -360,6 +366,33 @@ def get_ssh_port():
 # PDIRECT_REMOTE_PORT solo se usa para probar el relay contra un servidor de
 # prueba; en produccion no se define.
 REMOTE_PORT = int(os.environ.get("PDIRECT_REMOTE_PORT", "0")) or get_ssh_port()
+
+
+REAL_IP_HEADERS = (b"cf-connecting-ip:", b"true-client-ip:", b"x-real-ip:", b"x-forwarded-for:")
+
+
+def real_client_ip(data):
+    """IP real del cliente cuando llega por un CDN (Cloudflare la manda en
+    CF-Connecting-IP); si no viene ninguna cabecera, None."""
+    for line in data.split(b"\n"):
+        low = line.strip().lower()
+        for h in REAL_IP_HEADERS:
+            if low.startswith(h):
+                ip = low[len(h):].split(b",")[0].strip().decode("ascii", "ignore")
+                if ip and len(ip) <= 45 and all(c in "0123456789abcdef.:" for c in ip):
+                    return ip
+    return None
+
+
+def session_open(remote, address, listen_port, data=b""):
+    try:
+        path = os.path.join(SESSION_DIR, str(remote.getsockname()[1]))
+        ip = real_client_ip(data) or address[0]
+        with open(path, "w") as f:
+            f.write(f"{ip} {address[1]} {listen_port}\n")
+        return path
+    except Exception:
+        return None
 
 
 def is_http(data):
@@ -467,8 +500,9 @@ def pump_copy(src, dst):
 pump = pump_splice if HAS_SPLICE else pump_copy
 
 
-def handler(client_socket, address):
+def handler(client_socket, address, listen_port):
     remote = None
+    session = None
     try:
         tune(client_socket)
         data = read_payload(client_socket)
@@ -478,6 +512,7 @@ def handler(client_socket, address):
         remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote.connect((REMOTE_ADDR, REMOTE_PORT))
         tune(remote)
+        session = session_open(remote, address, listen_port, data)
 
         if is_http(data):
             remote.settimeout(5)
@@ -509,6 +544,11 @@ def handler(client_socket, address):
     except Exception as ex:
         dbg(f"{address} | EXCEPCION en handler: {ex}\n{traceback.format_exc()}")
     finally:
+        if session:
+            try:
+                os.unlink(session)
+            except OSError:
+                pass
         for s in (client_socket, remote):
             try:
                 if s:
@@ -527,10 +567,11 @@ def listen(port):
 
 
 def accept_loop(server):
+    listen_port = server.getsockname()[1]
     while True:
         try:
             c, a = server.accept()
-            threading.Thread(target=handler, args=(c, a), daemon=True).start()
+            threading.Thread(target=handler, args=(c, a, listen_port), daemon=True).start()
         except Exception as ex:
             print(f"[error] {ex}", flush=True)
 
@@ -547,6 +588,13 @@ def serve(ports):
 
 def main(ports, workers=WORKERS):
     threading.stack_size(512 * 1024)
+    try:
+        os.makedirs(SESSION_DIR, exist_ok=True)
+        # Al reiniciar, las sesiones anteriores ya no existen.
+        for n in os.listdir(SESSION_DIR):
+            os.unlink(os.path.join(SESSION_DIR, n))
+    except OSError:
+        pass
     children = []
     for _ in range(max(0, workers - 1)):
         pid = os.fork()
