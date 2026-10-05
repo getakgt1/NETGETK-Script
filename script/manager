@@ -83,6 +83,16 @@ menu_protocolos() {
     HY_ST=$(systemctl is-active --quiet hysteria 2>/dev/null && st_on || st_off)
     VAYDNS_ST=$(systemctl is-active --quiet hysteria 2/dev/null && [[ -f /root/hysteria.crt ]] && st_on || st_off)
     FALCON_ST=$(systemctl is-active --quiet falcon-proxy 2>/dev/null && st_on || st_off)
+    # Disfraz HTTP Custom sobre el túnel DNS (Server/dnstt-http.sh):
+    # reutiliza el mismo slowdns.service, solo lee a qué upstream apunta
+    # hoy (127.0.0.1:80 = disfraz activo, 127.0.0.1:2222 = modo clásico).
+    DNSTT_HTTP_UP=$(systemctl cat slowdns 2>/dev/null | grep "^ExecStart=" | tail -1 | grep -oE "127\.0\.0\.1:[0-9]+" | tail -1 | cut -d: -f2)
+    DNSTT_HTTP_WS_PORT=$(grep -m1 "^SSH_WS_PORT=" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2); [[ -z "$DNSTT_HTTP_WS_PORT" ]] && DNSTT_HTTP_WS_PORT=80
+    if systemctl is-active --quiet slowdns 2>/dev/null && [[ "$DNSTT_HTTP_UP" == "$DNSTT_HTTP_WS_PORT" ]]; then
+        DNSTT_HTTP_ST=$(st_on)
+    else
+        DNSTT_HTTP_ST=$(st_off)
+    fi
     
     printf " ${WHITE}[1]${NC}  ⇒ OpenSSH          %-12s" "$SSH_ST"
     printf " ${WHITE}[2]${NC}  ⇒ WEB-NGinx        %s\n" "$NGINX_ST"
@@ -97,6 +107,7 @@ menu_protocolos() {
     printf " ${WHITE}[11]${NC} ⇒ Hysteria         %-12s\n" "$HY_ST"
     printf " ${WHITE}[12]${NC} ⇒ VayDNS SSH       %-12s\n" "$VAYDNS_ST"
     printf " ${WHITE}[13]${NC} ⇒ Falcon Proxy     %-12s\n" "$FALCON_ST"
+    printf " ${WHITE}[14]${NC} ⇒ SlowDNS+HTTP     %-12s${YELLOW}(experimental)${NC}\n" "$DNSTT_HTTP_ST"
     echo ""
     echo -e " ${WHITE}[0]${NC}  ⇒ ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -116,6 +127,7 @@ menu_protocolos() {
         11) bash $INSTALL_DIR/Server/hysteria.sh; menu_protocolos ;;
         12) bash $INSTALL_DIR/Server/vaydns.sh; menu_protocolos ;;
         13) bash $INSTALL_DIR/Server/falcon-proxy.sh; menu_protocolos ;;
+        14) bash $INSTALL_DIR/Server/dnstt-http.sh; menu_protocolos ;;
         0) show_main ;;
         *) menu_protocolos ;;
     esac
@@ -237,6 +249,7 @@ menu_update() {
                 ["script/Server/ssl.sh"]="$INSTALL_DIR/Server/ssl.sh"
                 ["script/Server/socks5.sh"]="$INSTALL_DIR/Server/socks5.sh"
                 ["script/Server/slowdns.sh"]="$INSTALL_DIR/Server/slowdns.sh"
+                ["script/Server/dnstt-http.sh"]="$INSTALL_DIR/Server/dnstt-http.sh"
                 ["script/Server/udp.sh"]="$INSTALL_DIR/Server/udp.sh"
                 ["script/Server/vaydns.sh"]="$INSTALL_DIR/Server/vaydns.sh"
                 ["panel/server.js"]="$INSTALL_DIR/panel/server.js"
