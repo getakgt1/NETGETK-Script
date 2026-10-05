@@ -57,7 +57,7 @@ validar_dias() {
     local dias="$1"
     [[ -z "$dias" ]] && dias=30
     if ! [[ "$dias" =~ ^[0-9]+$ ]] || [[ "$dias" -lt 1 ]] || [[ "$dias" -gt 365 ]]; then
-        echo -e "${RED}[!] Días inválidos. Usando 30 por defecto.${NC}"
+        echo -e "${RED}[!] Días inválidos. Usando 30 por defecto.${NC}" >&2
         dias=30
     fi
     echo "$dias"
@@ -99,8 +99,16 @@ create_ssh() {
     # FIX CRITICO: Dropbear rechaza usuarios cuya shell no esta en /etc/shells
     grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
-    useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME" 2>/dev/null
-    echo "$USERNAME:$PASSWORD" | chpasswd
+    if [[ -z "$EXPIRY" ]]; then
+        echo -e "${RED}[!] No se pudo calcular la fecha de expiración${NC}"; press_enter; return
+    fi
+    if ! useradd -e "$EXPIRY" -s /bin/false -M "$USERNAME"; then
+        echo -e "${RED}[!] No se pudo crear el usuario en el sistema${NC}"; press_enter; return
+    fi
+    if ! echo "$USERNAME:$PASSWORD" | chpasswd; then
+        userdel "$USERNAME" 2>/dev/null
+        echo -e "${RED}[!] No se pudo asignar la contraseña; usuario no creado${NC}"; press_enter; return
+    fi
 
     # Guardar info del usuario
     mkdir -p "$USERS_DIR"
@@ -113,6 +121,7 @@ EXPIRY=$EXPIRY
 DIAS=$DIAS
 LIMIT=$LIMIT
 INFO
+    chmod 600 "$USERS_DIR/${USERNAME}.info"
 
     # BUG FIX: Aplicar límite de conexiones vía /etc/security/limits.conf
     # El original no aplicaba el límite en ningún lado del sistema
@@ -661,7 +670,7 @@ for ib in c.get('inbounds',[]):
         ib['settings']['clients']=[x for x in cl if x.get('id')!='$UUID']
 with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
 " 2>/dev/null
-                        systemctl restart xray 2>/dev/null
+                        XRAY_DIRTY=1
                     fi
                 else
                     # SSH: matar sesiones y eliminar usuario del sistema
@@ -678,6 +687,8 @@ with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
         done
     fi
 
+    # Un solo reinicio de Xray aunque expiren varios usuarios a la vez
+    [[ "${XRAY_DIRTY:-0}" == 1 ]] && systemctl restart xray 2>/dev/null
     [[ "$1" != "auto" ]] && echo -e "${GREEN}[+] $COUNT usuarios expirados eliminados${NC}"
     [[ "$1" != "auto" ]] && press_enter
 }
