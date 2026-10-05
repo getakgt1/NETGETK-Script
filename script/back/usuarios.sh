@@ -87,11 +87,11 @@ create_ssh() {
     echo -ne " ${WHITE}Días de expiración (ej. 30) : ${NC}"; read DIAS_INPUT
     DIAS=$(validar_dias "$DIAS_INPUT")
 
-    # BUG FIX: Límite de conexiones simultáneas --- el script original
-    # no tenía esta opción, usuarios podían conectarse sin límite
-    echo -ne " ${WHITE}Límite de conexiones simultáneas (default: 1) : ${NC}"; read LIMIT
-    [[ -z "$LIMIT" ]] && LIMIT=1
-    if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then LIMIT=1; fi
+    # Sin límite de conexiones simultáneas. El "hard maxlogins" de
+    # /etc/security/limits.conf solo cuenta sesiones con terminal y un túnel
+    # SSH no abre terminal, así que nunca limitaba nada; se quitó para no
+    # mostrar un límite que no existe. LIMIT=0 significa "sin límite".
+    LIMIT=0
 
     EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
 
@@ -123,14 +123,10 @@ LIMIT=$LIMIT
 INFO
     chmod 600 "$USERS_DIR/${USERNAME}.info"
 
-    # BUG FIX: Aplicar límite de conexiones vía /etc/security/limits.conf
-    # El original no aplicaba el límite en ningún lado del sistema
-    if grep -q "^$USERNAME" /etc/security/limits.conf 2>/dev/null; then
-        sed -i "/^$USERNAME/d" /etc/security/limits.conf
-    fi
-    echo "$USERNAME hard maxlogins $LIMIT" >> /etc/security/limits.conf
+    # Quitar una línea vieja de maxlogins si quedó de un usuario anterior
+    sed -i "/^${USERNAME}[[:space:]]/d" /etc/security/limits.conf 2>/dev/null
 
-    log_action "CREAR SSH usuario=$USERNAME expiry=$EXPIRY limit=$LIMIT"
+    log_action "CREAR SSH usuario=$USERNAME expiry=$EXPIRY"
     hy_sync
 
     VPS_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
@@ -142,7 +138,7 @@ INFO
     echo -e "${GREEN}---${NC} ${WHITE}Usuario  :${NC} ${CYAN}$USERNAME${NC}"
     echo -e "${GREEN}---${NC} ${WHITE}Password :${NC} ${CYAN}$PASSWORD${NC}"
     echo -e "${GREEN}---${NC} ${WHITE}Expira   :${NC} ${YELLOW}$EXPIRY${NC} (${DIAS} días)"
-    echo -e "${GREEN}---${NC} ${WHITE}Límite   :${NC} ${CYAN}$LIMIT conexión(es)${NC}"
+    echo -e "${GREEN}---${NC} ${WHITE}Límite   :${NC} ${CYAN}sin límite${NC}"
     echo -e "${GREEN}---${NC} ${WHITE}IP VPS   :${NC} ${CYAN}$VPS_IP${NC}"
     echo -e "${GREEN}------------------------------------------------------------------------------------------------------------------------------------${NC}"
     press_enter
@@ -164,7 +160,7 @@ delete_ssh() {
     rm -f "$USERS_DIR/${USERNAME}.info"
 
     # BUG FIX: El original no limpiaba limits.conf al borrar
-    sed -i "/^$USERNAME/d" /etc/security/limits.conf 2>/dev/null
+    sed -i "/^${USERNAME}[[:space:]]/d" /etc/security/limits.conf 2>/dev/null
 
     log_action "ELIMINAR SSH usuario=$USERNAME"
     hy_sync
@@ -407,7 +403,7 @@ list_users() {
             fi
 
             printf " ${CYAN}%-18s${NC} ${WHITE}%-8s${NC} ${YELLOW}%-12s${NC} ${WHITE}%-6s${NC} %b\n" \
-                "$USERNAME" "${TYPE:-ssh}" "$EXPIRY" "${LIMIT:-1}" "$STATUS"
+                "$USERNAME" "${TYPE:-ssh}" "$EXPIRY" "$([[ -z "$LIMIT" || "$LIMIT" == 0 ]] && echo "sin" || echo "$LIMIT")" "$STATUS"
         done
     else
         echo -e " ${YELLOW}Sin usuarios registrados${NC}"
@@ -676,7 +672,7 @@ with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
                     # SSH: matar sesiones y eliminar usuario del sistema
                     pkill -u "$USERNAME" 2>/dev/null
                     userdel "$USERNAME" 2>/dev/null
-                    sed -i "/^$USERNAME/d" /etc/security/limits.conf 2>/dev/null
+                    sed -i "/^${USERNAME}[[:space:]]/d" /etc/security/limits.conf 2>/dev/null
                 fi
 
                 rm -f "$f"

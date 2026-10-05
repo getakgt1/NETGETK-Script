@@ -990,10 +990,7 @@ async function loadUsers() {
       <div class="user-card-actions">
         <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
         <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
-        <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}', ${u.limitVal||0})">
-          ⚙ Límite${u.limitVal > 0 ? ` (${u.limitVal})` : ''}
-        </button>
-        <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓 Desbloquear':'🔒 Bloquear'}</button>
+        <button class="btn btn-secondary" style="grid-column:span 2" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓 Desbloquear':'🔒 Bloquear'}</button>
         <button class="btn btn-danger" style="grid-column:span 2" onclick="deleteUser('${u.USERNAME}')">🗑 Eliminar</button>
       </div>
     </div>
@@ -1021,7 +1018,6 @@ async function loadUsers() {
         <div class="actions-wrap">
           <button class="btn btn-info" onclick="viewUser('${u.USERNAME}')">👁 Ver</button>
           <button class="btn btn-warning" onclick="renewUser('${u.USERNAME}')">🔄 Renovar</button>
-          <button class="btn btn-limit" onclick="setLimit('${u.USERNAME}', ${u.limitVal||0})">⚙ Límite</button>
           <button class="btn btn-secondary" onclick="toggleUser('${u.USERNAME}')">${u.blocked?'🔓':'🔒'}</button>
           <button class="btn btn-danger" onclick="deleteUser('${u.USERNAME}')">🗑</button>
         </div>
@@ -1095,20 +1091,6 @@ async function renewUser(username) {
   });
   const d = await r.json();
   if (d.ok) { toast(`✓ ${username} renovado hasta ${d.expiry}`, true); loadUsers(); }
-  else toast('✗ Error: ' + d.error, false);
-}
-
-async function setLimit(username, current) {
-  const current_val = (current && current > 0) ? current : 0;
-  const hint = current_val > 0 ? `Actual: ${current_val}` : 'Sin límite (0 = ilimitado)';
-  const limit = prompt(`Límite de conexiones para ${username}\n${hint}\n\nNuevo valor (0 = ilimitado):`, current_val || '');
-  if (limit === null) return;
-  const r = await fetch(`${API}/api/users/${username}/limit`, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ limit: parseInt(limit) })
-  });
-  const d = await r.json();
-  if (d.ok) { toast(`✓ Límite de ${username} actualizado a ${d.limit}`, true); loadUsers(); }
   else toast('✗ Error: ' + d.error, false);
 }
 
