@@ -141,6 +141,7 @@ SCRIPTS=(
     "Server/ssl.sh"
     "Server/socks5.sh"
     "Server/slowdns.sh"
+    "Server/dnstt-http.sh"
     "Server/udp.sh"
     "Server/vaydns.sh"
     "Server/falcon-proxy.sh"

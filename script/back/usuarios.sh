@@ -16,6 +16,10 @@ NC='\033[0m'
 INSTALL_DIR="/etc/gtkvpn"
 USERS_DIR="$INSTALL_DIR/users"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
+# Los .info de Xray traen PATH=/ (ruta del xhttp): al hacer "source" pisaban
+# el PATH del sistema y el script dejaba de encontrar date/rm/systemctl.
+SAFE_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PATH="$SAFE_PATH"
 LOG_FILE="/var/log/gtkvpn/usuarios.log"
 # ── Sync Hysteria auth con usuarios SSH ──────────────────────
 hy_sync() {
@@ -56,6 +60,8 @@ log_action() {
 validar_dias() {
     local dias="$1"
     [[ -z "$dias" ]] && dias=30
+    # 0 = permanente (no vence nunca)
+    [[ "$dias" == "0" ]] && { echo "0"; return; }
     if ! [[ "$dias" =~ ^[0-9]+$ ]] || [[ "$dias" -lt 1 ]] || [[ "$dias" -gt 365 ]]; then
         echo -e "${RED}[!] Días inválidos. Usando 30 por defecto.${NC}" >&2
         dias=30
@@ -64,6 +70,11 @@ validar_dias() {
 }
 
 # --------- CREAR USUARIO SSH ------------------------------------------------------------------------------------------------------------------------
+# Fecha de vencimiento a partir de los días; 0 = permanente.
+calc_expiry() {
+    if [[ "$1" == "0" ]]; then echo "9999-12-31"; else date -d "+$1 days" +%Y-%m-%d; fi
+}
+
 create_ssh() {
     echo ""
     echo -e "${CYAN}------------------------------------------------------------------------------------------------${NC}"
@@ -84,7 +95,7 @@ create_ssh() {
     echo -ne " ${WHITE}Contraseña : ${NC}"; read -s PASSWORD; echo
     if [[ -z "$PASSWORD" ]]; then echo -e "${RED}[!] Contraseña vacía${NC}"; return; fi
 
-    echo -ne " ${WHITE}Días de expiración (ej. 30) : ${NC}"; read DIAS_INPUT
+    echo -ne " ${WHITE}Días de expiración (ej. 30, 0 = permanente) : ${NC}"; read DIAS_INPUT
     DIAS=$(validar_dias "$DIAS_INPUT")
 
     # Sin límite de conexiones simultáneas. El "hard maxlogins" de
@@ -93,7 +104,7 @@ create_ssh() {
     # mostrar un límite que no existe. LIMIT=0 significa "sin límite".
     LIMIT=0
 
-    EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
+    EXPIRY=$(calc_expiry "$DIAS")
 
     # Crear usuario sin home, con shell restringida
     # FIX CRITICO: Dropbear rechaza usuarios cuya shell no esta en /etc/shells
@@ -379,7 +390,7 @@ list_users() {
         for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
             unset USERNAME TYPE EXPIRY LIMIT
-            source "$f"
+            source "$f"; PATH="$SAFE_PATH"
 
             TODAY=$(date +%Y-%m-%d)
 
@@ -464,11 +475,11 @@ create_xray() {
         echo -e "${RED}[!] Ya existe un usuario Xray con ese nombre${NC}"; press_enter; return
     fi
 
-    echo -ne " ${WHITE}Días de expiración (ej. 30) : ${NC}"; read DIAS_INPUT
+    echo -ne " ${WHITE}Días de expiración (ej. 30, 0 = permanente) : ${NC}"; read DIAS_INPUT
     DIAS=$(validar_dias "$DIAS_INPUT")
 
     UUID=$(uuidgen)
-    EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
+    EXPIRY=$(calc_expiry "$DIAS")
     XRAY_PORT=$(grep "XRAY_PORT" /etc/gtkvpn/config.conf 2>/dev/null | cut -d= -f2 || echo "32595")
     VPS_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
@@ -529,6 +540,7 @@ CREATED=$(date +%Y-%m-%d)
 EXPIRY=$EXPIRY
 DIAS=$DIAS
 INFO
+    chmod 600 "$USERS_DIR/${USERNAME}_xray.info"
 
     log_action "CREAR XRAY usuario=$USERNAME uuid=$UUID expiry=$EXPIRY"
 
@@ -562,7 +574,7 @@ delete_xray() {
         echo -e "${RED}[!] Usuario no encontrado${NC}"; press_enter; return
     fi
 
-    source "$INFO_FILE"
+    source "$INFO_FILE"; PATH="$SAFE_PATH"
 
     python3 << PYEOF
 import json
@@ -593,10 +605,10 @@ PYEOF
 renew_user() {
     echo ""
     echo -ne " ${WHITE}Usuario a renovar : ${NC}"; read USERNAME
-    echo -ne " ${WHITE}Nuevos días : ${NC}"; read DIAS_INPUT
+    echo -ne " ${WHITE}Nuevos días (0 = permanente) : ${NC}"; read DIAS_INPUT
     DIAS=$(validar_dias "$DIAS_INPUT")
 
-    NEW_EXPIRY=$(date -d "+${DIAS} days" +%Y-%m-%d)
+    NEW_EXPIRY=$(calc_expiry "$DIAS")
 
     RENOVADO=false
 
@@ -642,15 +654,18 @@ clean_expired() {
     [[ "$1" != "auto" ]] && echo -e "${CYAN}[*] Limpiando usuarios expirados...${NC}"
     TODAY_TS=$(date +%s)
     COUNT=0
+    XRAY_CHANGED=0
 
     if [[ -d "$USERS_DIR" ]]; then
         for f in "$USERS_DIR"/*.info; do
             [[ -f "$f" ]] || continue
             unset USERNAME TYPE EXPIRY UUID
-            source "$f"
+            source "$f"; PATH="$SAFE_PATH"
 
             # BUG FIX: Comparación de fecha con timestamp igual que list_users
-            EXPIRY_TS=$(date -d "$EXPIRY" +%s 2>/dev/null || echo 0)
+            # Fecha vacía o inválida → no se toca (antes contaba como vencido).
+            [[ -z "$EXPIRY" ]] && continue
+            EXPIRY_TS=$(date -d "$EXPIRY" +%s 2>/dev/null) || continue
 
             if [[ "$EXPIRY_TS" -lt "$TODAY_TS" ]]; then
                 if [[ "${TYPE:-ssh}" == "xray" ]]; then
@@ -666,7 +681,10 @@ for ib in c.get('inbounds',[]):
         ib['settings']['clients']=[x for x in cl if x.get('id')!='$UUID']
 with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
 " 2>/dev/null
-                        XRAY_DIRTY=1
+                        # Un solo reinicio al final (ver abajo): reiniciar aquí,
+                        # por cada usuario vencido, cortaba a TODOS los
+                        # conectados por Xray varias veces seguidas.
+                        XRAY_CHANGED=1
                     fi
                 else
                     # SSH: matar sesiones y eliminar usuario del sistema
@@ -683,8 +701,7 @@ with open('$XRAY_CONFIG','w') as f: json.dump(c,f,indent=2)
         done
     fi
 
-    # Un solo reinicio de Xray aunque expiren varios usuarios a la vez
-    [[ "${XRAY_DIRTY:-0}" == 1 ]] && systemctl restart xray 2>/dev/null
+    [[ "$XRAY_CHANGED" == "1" ]] && systemctl restart xray 2>/dev/null
     [[ "$1" != "auto" ]] && echo -e "${GREEN}[+] $COUNT usuarios expirados eliminados${NC}"
     [[ "$1" != "auto" ]] && press_enter
 }
