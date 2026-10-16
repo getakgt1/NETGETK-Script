@@ -163,10 +163,25 @@ install_stunnel() {
 pid = /var/run/stunnel4/stunnel4.pid
 output = /var/log/stunnel4/stunnel.log
 
+; GTKVPN: antes escribia una linea por conexion al log.
+debug = 4
+
+; Cache de sesiones TLS: el cliente que se reconecta no vuelve a pagar el
+; handshake completo (clave en moviles que cambian de red a cada rato).
+sessionCacheSize = 20000
+sessionCacheTimeout = 3600
+
+; Sin esperas de Nagle y con keepalive: detecta moviles que desaparecieron.
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1
+socket = l:SO_KEEPALIVE=1
+socket = r:SO_KEEPALIVE=1
+
 [ssh-ssl]
 accept  = $SSL_PORT
 connect = 127.0.0.1:$WS_PORT
 cert    = /etc/stunnel/stunnel.pem
+TIMEOUTclose = 0
 STUNNELCONF
 
     echo "ENABLED=1" > /etc/default/stunnel4

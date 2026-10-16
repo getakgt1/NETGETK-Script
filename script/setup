@@ -238,6 +238,16 @@ ufw allow 2222/tcp 2>/dev/null
 ufw allow 7300/udp 2>/dev/null
 ufw --force enable 2>/dev/null
 
+# Optimizacion de rendimiento: kernel (BBR, buffers, conntrack), reparto de red
+# entre nucleos, OpenSSH, dropbear, fail2ban, journald y swap. Es idempotente y
+# se puede repetir o quitar desde el menu (OPTIMIZAR VPS).
+echo -e "${CYAN}  → Aplicando optimizaciones de rendimiento...${NC}"
+if [[ -x "$INSTALL_DIR/back/optimizador.sh" ]]; then
+    bash "$INSTALL_DIR/back/optimizador.sh" auto 2>/dev/null \
+        && echo -e "  ${GREEN}✓ Optimizaciones de rendimiento aplicadas${NC}" \
+        || echo -e "  ${YELLOW}~ No se pudieron aplicar todas; reintenta desde el menu: OPTIMIZAR VPS${NC}"
+fi
+
 # Instalar panel web
 echo -e "${CYAN}[7/7] Instalando panel web...${NC}"
 if [[ -f "$INSTALL_DIR/panel/server.js" ]]; then
