@@ -73,10 +73,33 @@ def ppid_of(pid):
     return 0
 
 
+# ── Puertos relevantes: SSH, el proxy WS/SSL y los que declare Falcon ──
+def relay_ports():
+    ports = set()
+    try:
+        for line in open(CONFIG):
+            k, _, v = line.strip().partition("=")
+            if k in ("SSH_WS_PORT", "STUNNEL_PORT") and v.isdigit():
+                ports.add(int(v))
+    except OSError:
+        pass
+    try:
+        for line in open("/etc/gtkvpn/falcon-proxy.conf"):
+            if line.startswith("PROXY_PORTS="):
+                ports |= {int(x) for x in re.findall(r"\d+", line)}
+    except OSError:
+        pass
+    return ports | {80}
+
+
 # ── Sockets TCP establecidos: dueño de cada extremo y sockets por PID ────
+# Solo los de los puertos SSH / proxy: en un VPS con miles de conexiones Xray
+# leer todos los sockets con -p tardaba segundos de más.
 owner = {}      # (ip, puerto local) -> nombre del proceso
 socks = {}      # pid -> [(local, peer)]
-for line in sh("ss -tnpH state established").splitlines():
+_sshp = conf_ports()
+_flt = " or ".join([f"sport = :{p}" for p in _sshp] + [f"dport = :{p}" for p in _sshp | relay_ports()])
+for line in sh(f"ss -tnpH state established '( {_flt} )'").splitlines():
     parts = line.split()
     if len(parts) < 5:
         continue
@@ -138,19 +161,23 @@ def add(user, kind, ip):
 
 
 # ── Dropbear: usuario por PID desde su log (último usuario autenticado) ──
+# Se consulta el registro SOLO de los procesos hijos vivos (_PID=...). Leer
+# todo el registro desde el arranque del servicio tardaba ~10 s en una VPS con
+# decenas de miles de líneas y dejaba sin datos al monitor del panel.
 last_user = {}
-# Ninguna sesión viva es anterior al arranque del servicio: leer solo desde
-# ahí (en un VPS con días de uptime el log completo es enorme).
-since = sh("systemctl show dropbear -p ActiveEnterTimestamp --value").strip()
-since_arg = f'--since "{since}"' if since and since != "n/a" else "-b"
-log = sh(f"journalctl -u dropbear {since_arg} -o cat --no-pager 2>/dev/null; grep dropbear /var/log/auth.log 2>/dev/null")
+live = [int(x) for x in sh("pgrep -x dropbear").split()]
+children = [p for p in live if proc_name(ppid_of(p)) == "dropbear"]
+log = ""
+if children:
+    log = sh("journalctl -o cat --no-pager " + " ".join(f"_PID={p}" for p in children) + " 2>/dev/null")
+    if "auth succeeded" not in log:                      # dropbear que escribe a auth.log
+        pat = "|".join(str(p) for p in children)
+        log = sh(f"grep -E 'dropbear\\[({pat})\\]' /var/log/auth.log 2>/dev/null")
 for line in log.splitlines():
     m = re.search(r"\[(\d+)\].*auth succeeded for '([^']+)'", line)
     if m:
         last_user[int(m.group(1))] = m.group(2)
-for pid in map(int, sh("pgrep -x dropbear").split()):
-    if proc_name(ppid_of(pid)) != "dropbear":           # proceso principal
-        continue
+for pid in children:
     user = last_user.get(pid)
     if user and user != "root":                         # root = administración
         kind, ip = origin_of(pid)
