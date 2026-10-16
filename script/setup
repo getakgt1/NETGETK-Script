@@ -18,6 +18,19 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# --- curl hace falta YA (validar la licencia) ---
+# Antes curl se instalaba mas abajo, despues de validar; en imagenes minimas
+# sin curl la peticion ni salia y el error aparecia como "no se pudo conectar".
+if ! command -v curl >/dev/null 2>&1; then
+    echo -e "${CYAN}[*] Instalando curl...${NC}"
+    apt-get update -qq >/dev/null 2>&1
+    apt-get install -y -qq curl >/dev/null 2>&1
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "${RED}[!] No se pudo instalar curl. Ejecuta: apt update && apt install -y curl${NC}"
+        exit 1
+    fi
+fi
+
 # --- Validar Licencia ---
 LICENSE_SERVER="http://66.94.101.32:3000"
 VPS_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null || curl -s --max-time 10 ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
@@ -31,9 +44,16 @@ echo -e "${CYAN}[*] Validando licencia...${NC}"
 RESPONSE=$(curl -s --max-time 15 -X POST "$LICENSE_SERVER/api/validate" \
     -H "Content-Type: application/json" \
     -d "{\"key\":\"$LICENSE_KEY\",\"ip\":\"$VPS_IP\",\"action\":\"install\"}" 2>/dev/null)
+CURL_RC=$?
 if [[ -z "$RESPONSE" ]]; then
     echo -e "${RED}[!] No se pudo conectar al servidor de licencias${NC}"
-    echo -e "${YELLOW}    Verifica tu conexion o contacta soporte${NC}"
+    case $CURL_RC in
+        6)  echo -e "${YELLOW}    Causa: el VPS no resuelve nombres (DNS).${NC}" ;;
+        7)  echo -e "${YELLOW}    Causa: conexion rechazada o puerto 3000 bloqueado (firewall del proveedor o del VPS).${NC}" ;;
+        28) echo -e "${YELLOW}    Causa: tiempo agotado; algo descarta el trafico hacia ${LICENSE_SERVER#http://}.${NC}" ;;
+        *)  echo -e "${YELLOW}    Causa: curl error $CURL_RC.${NC}" ;;
+    esac
+    echo -e "${YELLOW}    Prueba: curl -v -m 15 $LICENSE_SERVER/api/validate${NC}"
     exit 1
 fi
 STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
