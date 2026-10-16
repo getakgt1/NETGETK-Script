@@ -249,24 +249,22 @@ def read_payload(sock):
 
 
 def leftover_after_headers(data, address):
-    # Cualquier byte que haya llegado pegado despues del \r\n\r\n
-    # (el arranque real del handshake SSH del cliente) NO debe
-    # descartarse: hay que reenviarlo al backend. Ademas, algunos
-    # payloads no traen \r\n\r\n en absoluto pero SI llevan pegada
-    # la linea de identificacion SSH ("SSH-2.0-...") del cliente
-    # en el mismo bloque inicial -> hay que detectarla tambien.
+    # Despues de los headers del payload puede venir pegado el arranque real
+    # del handshake SSH del cliente ("SSH-2.0-...") y eso SI hay que
+    # reenviarlo al backend. Pero muchos payloads traen ademas texto sobrante
+    # que NO es SSH (p. ej. "User-Agent: ...Content-Length: 666..."): dropbear
+    # lo recibe antes de la identificacion SSH y cierra la conexion. Por eso
+    # solo se reenvia desde el primer "SSH-"; lo demas se descarta.
     sep_idx, sep_len = data.find(b"\r\n\r\n"), 4
     if sep_idx == -1:
         sep_idx, sep_len = data.find(b"\n\n"), 2
-    if sep_idx != -1:
-        leftover = data[sep_idx + sep_len:]
-        dbg(f"{address} | leftover tras headers ({len(leftover)}b): {hexpreview(leftover)}")
-        return leftover
-    ssh_idx = data.find(b"SSH-")
+    tail = data[sep_idx + sep_len:] if sep_idx != -1 else data
+    ssh_idx = tail.find(b"SSH-")
     if ssh_idx != -1:
-        dbg(f"{address} | identificacion SSH embebida en data, offset {ssh_idx}")
-        return data[ssh_idx:]
-    dbg(f"{address} | no se encontro separador ni identificacion SSH en data")
+        dbg(f"{address} | handshake SSH pegado a los headers, offset {ssh_idx}: {hexpreview(tail[ssh_idx:])}")
+        return tail[ssh_idx:]
+    if tail:
+        dbg(f"{address} | descartados {len(tail)} bytes de payload que no son SSH: {hexpreview(tail)}")
     return b""
 
 
