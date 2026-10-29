@@ -11,6 +11,7 @@
 import argparse, asyncio, hashlib, struct, sys
 
 MAGIC = b"BHP1"
+BATCH_GRACE = 0.03  # tras el primer dato de un batch, espera maxima por los slots restantes
 LONGPOLL = 2.0   # espera max de un batch vacio a que el backend produzca datos
 
 def log(msg):
@@ -199,9 +200,14 @@ class Server:
                     if chunk_size <= 0: chunk_size = 1399
                     if count <= 0: count = 1
                     deadline = asyncio.get_running_loop().time() + LONGPOLL
+                    loop = asyncio.get_running_loop()
                     for i in range(count):
                         chunk = await s.download(seq + i, chunk_size, deadline)
                         self._send_data(writer, sess, mode, seq + i, chunk)
+                        if chunk:
+                            # ya hay datos para el cliente: no hacerlo esperar el
+                            # LONGPOLL completo por los slots que quedan vacios
+                            deadline = min(deadline, loop.time() + BATCH_GRACE)
                     await writer.drain()
                 elif mode == 4:                     # ack
                     await s.ack(seq)
