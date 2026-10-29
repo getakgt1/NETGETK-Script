@@ -32,7 +32,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 # --- Validar Licencia ---
-LICENSE_SERVER="http://0.0.0.0:3000"
+LICENSE_SERVER="http://gtkpro.xyz:3000"
 VPS_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null || curl -s --max-time 10 ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
 
 echo -e "${CYAN}[*] Ingresa tu KEY de licencia:${NC}"
