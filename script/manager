@@ -84,6 +84,8 @@ menu_protocolos() {
     VAYDNS_ST=$(systemctl is-active --quiet hysteria 2/dev/null && [[ -f /root/hysteria.crt ]] && st_on || st_off)
     FALCON_ST=$(systemctl is-active --quiet falcon-proxy 2>/dev/null && st_on || st_off)
     BHTTP_ST=$(systemctl is-active --quiet bhttp 2>/dev/null && st_on || st_off)
+    HCR_ST=$(systemctl is-active --quiet hcr-server 2>/dev/null && st_on || st_off)
+    BTUN_ST=$(systemctl is-active --quiet btun 2>/dev/null && st_on || st_off)
     # Disfraz HTTP Custom sobre el túnel DNS (Server/dnstt-http.sh):
     # reutiliza el mismo slowdns.service, solo lee a qué upstream apunta
     # hoy (127.0.0.1:80 = disfraz activo, 127.0.0.1:2222 = modo clásico).
@@ -110,6 +112,8 @@ menu_protocolos() {
     printf " ${WHITE}[13]${NC} ⇒ Falcon Proxy     %-12s\n" "$FALCON_ST"
     printf " ${WHITE}[14]${NC} ⇒ SlowDNS+HTTP     %-12s${YELLOW}(experimental)${NC}\n" "$DNSTT_HTTP_ST"
     printf " ${WHITE}[15]${NC} ⇒ BHTTP            %-12s${CYAN}(SSH sobre HTTP)${NC}\n" "$BHTTP_ST"
+    printf " ${WHITE}[16]${NC} ⇒ HCR              %-12s${CYAN}(requiere binario)${NC}\n" "$HCR_ST"
+    printf " ${WHITE}[17]${NC} ⇒ BTUN (TCP+UDP)   %-12s${CYAN}(requiere binario)${NC}\n" "$BTUN_ST"
     echo ""
     echo -e " ${WHITE}[0]${NC}  ⇒ ${RED}[ REGRESAR ]${NC}"
     echo -e "${CYAN}────────────────────────────────────────────────────────────${NC}"
@@ -131,6 +135,8 @@ menu_protocolos() {
         13) bash $INSTALL_DIR/Server/falcon-proxy.sh; menu_protocolos ;;
         14) bash $INSTALL_DIR/Server/dnstt-http.sh; menu_protocolos ;;
         15) bash $INSTALL_DIR/Server/bhttp.sh menu; menu_protocolos ;;
+        16) bash $INSTALL_DIR/Server/hcr.sh menu; menu_protocolos ;;
+        17) bash $INSTALL_DIR/Server/btun.sh menu; menu_protocolos ;;
         0) show_main ;;
         *) menu_protocolos ;;
     esac
@@ -259,6 +265,8 @@ menu_update() {
                 ["script/Server/falcon-proxy.sh"]="$INSTALL_DIR/Server/falcon-proxy.sh"
                 ["script/Server/bhttp.sh"]="$INSTALL_DIR/Server/bhttp.sh"
                 ["script/Server/bhttp-server.py"]="$INSTALL_DIR/Server/bhttp-server.py"
+                ["script/Server/hcr.sh"]="$INSTALL_DIR/Server/hcr.sh"
+                ["script/Server/btun.sh"]="$INSTALL_DIR/Server/btun.sh"
                 # pdirect.py ya cargado sigue corriendo; la versión nueva entra al reiniciar el servicio
                 ["script/Server/pdirect.py"]="/usr/local/bin/pdirect.py"
                 ["panel/server.js"]="$INSTALL_DIR/panel/server.js"
