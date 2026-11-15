@@ -77,7 +77,14 @@ add_extra() {
     if [[ ! -f "$f" ]] && port_busy "$p"; then
         echo -e "${RED}El puerto $p ya lo usa otro servicio (no se toca)${NC}"; return 1
     fi
-    write_unit "$f" "$p" "$BPORT"
+    # Idempotente: si ya existe con la misma configuración y está activo, no se reescribe ni se
+    # reinicia (así no se corta a nadie que ya use ese puerto).
+    local tmp; tmp="$(mktemp)"; write_unit "$tmp" "$p" "$BPORT"
+    if [[ -f "$f" ]] && cmp -s "$tmp" "$f" && systemctl is-active --quiet "bhttp-$p"; then
+        rm -f "$tmp"; fw_open "$p"
+        echo -e "${GREEN}BHTTP en $p ya estaba configurado y activo: sin cambios${NC}"; return 0
+    fi
+    install -m 644 "$tmp" "$f"; rm -f "$tmp"
     fw_open "$p"
     systemctl daemon-reload; systemctl enable "bhttp-$p" >/dev/null 2>&1; systemctl restart "bhttp-$p"
     sleep 2
