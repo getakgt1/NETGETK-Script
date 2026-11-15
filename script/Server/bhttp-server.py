@@ -8,9 +8,11 @@
 # Trama respuesta: status(1) len(4 BE) + payload enmascarado
 # Mascara        : XOR con SHA256(sessionId||mode||seq||dir||contador), dir 0=req 1=resp
 # Modos          : 0=probe 1=subida 2=bajada(probe calib) 3=lote(download real) 4=ack
-import argparse, asyncio, hashlib, struct, sys
+import argparse, asyncio, hashlib, struct, sys, time
 
 MAGIC = b"BHP1"
+import itertools
+_LO_N = itertools.count()
 BATCH_GRACE = 0.03  # tras el primer dato de un batch, espera maxima por los slots restantes
 LONGPOLL = 2.0   # espera max de un batch vacio a que el backend produzca datos
 
@@ -35,6 +37,20 @@ def probe_reply(mode, size):
     return bytes(out)
 
 
+SESSION_IDLE = 300   # segundos sin actividad -> se cierra la sesion
+EOF_GRACE = 30       # segundos tras cerrar el backend -> se limpia
+MAX_SESSIONS = 256
+
+
+class _BufWriter:
+    def __init__(self):
+        self.buf = bytearray()
+    def write(self, b):
+        self.buf += b
+    async def drain(self):
+        pass
+
+
 class Session:
     """Un tunel logico: empareja el flujo BHTTP con la conexion al backend (sshd)."""
     def __init__(self, sess, backend):
@@ -48,12 +64,20 @@ class Session:
         self.down_assign = 0
         self.eof = False
         self.closed = False
+        self.last = time.monotonic()   # ultimo uso (para expirar sesiones inactivas)
         self.br = None      # backend reader
         self.bw = None      # backend writer
 
     async def connect(self):
         host, port = self.backend
-        self.br, self.bw = await asyncio.open_connection(host, port)
+        # Origen loopback distinto por sesion: dropbear limita las conexiones SIN autenticar por IP
+        # (5). Con todas saliendo de 127.0.0.1, unos pocos handshakes colgados bloqueaban a TODOS
+        # los usuarios BHTTP durante 5 min ("no conecta nada"). Igual que pdirect (127.0.0.2-251).
+        src = "127.0.%d.%d" % (1 + next(_LO_N) % 200, 2 + self.sess[0] % 250)
+        try:
+            self.br, self.bw = await asyncio.open_connection(host, port, local_addr=(src, 0))
+        except OSError:
+            self.br, self.bw = await asyncio.open_connection(host, port)
         log("sesion %s: conectada al backend %s:%d" % (self.sess.hex()[:8], host, port))
         asyncio.create_task(self._reader())
 
@@ -149,11 +173,22 @@ class Server:
     async def get_session(self, sess):
         async with self.slock:
             s = self.sessions.get(sess)
+            if s is not None:
+                s.last = time.monotonic()
             if s is None or s.closed:
+                # VARIAS SESIONES A LA VEZ: antes una sesion nueva cerraba todas las demas, asi que
+                # dos clientes en el mismo puerto se echaban el uno al otro (banner/KEXINIT repetidos,
+                # resets, "conecta pero no hay internet"). Ahora solo se limpian las cerradas o inactivas.
+                now = time.monotonic()
                 for old_sid, old in list(self.sessions.items()):
-                    if old_sid != sess:
+                    if old_sid != sess and (old.closed or now - old.last > SESSION_IDLE
+                                            or (old.eof and now - old.last > EOF_GRACE)):
                         await old.close()
                         del self.sessions[old_sid]
+                if len(self.sessions) >= MAX_SESSIONS:
+                    oldest_sid, oldest = min(self.sessions.items(), key=lambda kv: kv[1].last)
+                    await oldest.close()
+                    del self.sessions[oldest_sid]
                 s = Session(sess, self.backend)
                 await s.connect()
                 self.sessions[sess] = s
@@ -161,61 +196,94 @@ class Server:
                     % (sess.hex()[:8], len(self.sessions)))
             return s
 
+    async def frame(self, hdr, reader, writer):
+        """Procesa UNA peticion BHTTP (hdr = 29 bytes). False = cerrar la conexion."""
+        mode = hdr[0]
+        sess = hdr[1:17]
+        seq = int.from_bytes(hdr[17:25], "big")
+        ln = int.from_bytes(hdr[25:29], "big")
+        payload = b""
+        if ln and mode in (0, 1, 2, 3):
+            raw = await reader.readexactly(ln)
+            payload = mask(raw, sess, mode, seq, 0)
+
+        if payload[:4] == MAGIC:  # probe (calibracion / handshake)
+            size = int.from_bytes(payload[6:10], "big") if len(payload) >= 10 else 0
+            pmode = payload[5] if len(payload) >= 6 else mode
+            body = mask(probe_reply(pmode, size), sess, mode, seq, 1)
+            writer.write(bytes([0]) + len(body).to_bytes(4, "big") + body)
+            await writer.drain()
+            return True
+
+        s = await self.get_session(sess)
+        if mode == 1:                       # subida (len 0 = registro)
+            await s.upload(seq, payload)
+            writer.write(bytes([0]) + (0).to_bytes(4, "big"))
+            await writer.drain()
+        elif mode == 2:                     # bajada simple (raro)
+            chunk = await s.download(seq, ln if ln > 0 else 1399,
+                                     asyncio.get_running_loop().time() + LONGPOLL)
+            self._send_data(writer, sess, mode, seq, chunk)
+            await writer.drain()
+        elif mode == 3:                     # lote de bajadas (download real)
+            if len(payload) >= 6:
+                chunk_size = int.from_bytes(payload[0:4], "big"); count = payload[5]
+            else:
+                chunk_size, count = 1399, 1
+            if chunk_size <= 0: chunk_size = 1399
+            if count <= 0: count = 1
+            # byte 4 del cuerpo = espera maxima pedida por el cliente en 0,1 s (0 = LONGPOLL por defecto)
+            lp = (payload[4] / 10.0) if (len(payload) >= 6 and 1 <= payload[4] <= 100) else LONGPOLL
+            deadline = asyncio.get_running_loop().time() + lp
+            loop = asyncio.get_running_loop()
+            for i in range(count):
+                chunk = await s.download(seq + i, chunk_size, deadline)
+                self._send_data(writer, sess, mode, seq + i, chunk)
+                if chunk:
+                    # ya hay datos para el cliente: no hacerlo esperar el
+                    # LONGPOLL completo por los slots que quedan vacios
+                    deadline = min(deadline, loop.time() + BATCH_GRACE)
+            await writer.drain()
+        elif mode == 4:                     # ack
+            await s.ack(seq)
+            writer.write(bytes([0]) + (0).to_bytes(4, "big"))
+            await writer.drain()
+        else:
+            return False
+        return True
+
     async def handle(self, reader, writer):
         try:
             while True:
-                hdr = await reader.readexactly(29)
-                mode = hdr[0]
-                sess = hdr[1:17]
-                seq = int.from_bytes(hdr[17:25], "big")
-                ln = int.from_bytes(hdr[25:29], "big")
-                payload = b""
-                if ln and mode in (0, 1, 2, 3):
-                    raw = await reader.readexactly(ln)
-                    payload = mask(raw, sess, mode, seq, 0)
-
-                if payload[:4] == MAGIC:  # probe (calibracion / handshake)
-                    size = int.from_bytes(payload[6:10], "big") if len(payload) >= 10 else 0
-                    pmode = payload[5] if len(payload) >= 6 else mode
-                    body = mask(probe_reply(pmode, size), sess, mode, seq, 1)
-                    writer.write(bytes([0]) + len(body).to_bytes(4, "big") + body)
-                    await writer.drain()
+                first = await reader.readexactly(1)
+                if first[0] <= 4:                   # BHTTP crudo (clientes anteriores)
+                    hdr = first + await reader.readexactly(28)
+                    if not await self.frame(hdr, reader, writer):
+                        return
                     continue
-
-                s = await self.get_session(sess)
-                if mode == 1:                       # subida (len 0 = registro)
-                    await s.upload(seq, payload)
-                    writer.write(bytes([0]) + (0).to_bytes(4, "big"))
-                    await writer.drain()
-                elif mode == 2:                     # bajada simple (raro)
-                    chunk = await s.download(seq, ln if ln > 0 else 1399,
-                                             asyncio.get_running_loop().time() + LONGPOLL)
-                    self._send_data(writer, sess, mode, seq, chunk)
-                    await writer.drain()
-                elif mode == 3:                     # lote de bajadas (download real)
-                    if len(payload) >= 6:
-                        chunk_size = int.from_bytes(payload[0:4], "big"); count = payload[5]
-                    else:
-                        chunk_size, count = 1399, 1
-                    if chunk_size <= 0: chunk_size = 1399
-                    if count <= 0: count = 1
-                    deadline = asyncio.get_running_loop().time() + LONGPOLL
-                    loop = asyncio.get_running_loop()
-                    for i in range(count):
-                        chunk = await s.download(seq + i, chunk_size, deadline)
-                        self._send_data(writer, sess, mode, seq + i, chunk)
-                        if chunk:
-                            # ya hay datos para el cliente: no hacerlo esperar el
-                            # LONGPOLL completo por los slots que quedan vacios
-                            deadline = min(deadline, loop.time() + BATCH_GRACE)
-                    await writer.drain()
-                elif mode == 4:                     # ack
-                    await s.ack(seq)
-                    writer.write(bytes([0]) + (0).to_bytes(4, "big"))
-                    await writer.drain()
-                else:
+                # BHTTP envuelto en un POST HTTP (pasa por proxies transparentes del operador)
+                head = first + await reader.readuntil(b"\r\n\r\n")
+                cl = 0
+                for line in head.split(b"\r\n")[1:]:
+                    k, _, v = line.partition(b":")
+                    if k.strip().lower() == b"content-length":
+                        cl = int(v.strip() or 0)
+                if cl < 29 or cl > (1 << 20):
                     return
-        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+                body = await reader.readexactly(cl)
+                rd = asyncio.StreamReader()
+                rd.feed_data(body[29:])
+                rd.feed_eof()
+                bw = _BufWriter()
+                ok = await self.frame(body[:29], rd, bw)
+                out = bytes(bw.buf)
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                             b"Cache-Control: no-store\r\nConnection: keep-alive\r\n"
+                             b"Content-Length: " + str(len(out)).encode() + b"\r\n\r\n" + out)
+                await writer.drain()
+                if not ok:
+                    return
+        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError, OSError, ValueError):
             pass
         except Exception as e:
             log("handle: excepcion inesperada: %r" % e)
