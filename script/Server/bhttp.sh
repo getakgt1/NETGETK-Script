@@ -101,7 +101,7 @@ pdirect_set() {
              mkdir -p /etc/bhttp; echo "$PORT" > "$PDIRECT_FILE"
              echo -e "${GREEN}Puerto 80 (pdirect) también acepta BHTTP -> $PORT${NC}"
              pgrep -f pdirect.py >/dev/null || echo -e "${YELLOW}pdirect no está corriendo: instala Falcon Proxy / WS para usar el 80${NC}" ;;
-        off) rm -f "$PDIRECT_FILE"; echo -e "${GREEN}Puerto 80 sin BHTTP (como antes)${NC}" ;;
+        off) mkdir -p /etc/bhttp; : > "$PDIRECT_FILE"; echo -e "${GREEN}Puerto 80 sin BHTTP (como antes)${NC}" ;;
         *)   echo "Uso: $0 pdirect on|off"; return 1 ;;
     esac
 }
@@ -115,7 +115,18 @@ do_install() {
     write_unit "$UNIT" "$PORT" "$BPORT"
     [[ -n "$old" && "$old" != "$PORT" ]] && fw_close "$old"
     fw_open "$PORT"
+    # Los puertos extra comparten el SSH de destino: se reescriben por si cambió.
+    for e in $(extra_ports); do
+        write_unit "/etc/systemd/system/bhttp-$e.service" "$e" "$BPORT"
+    done
+    # BHTTP por el puerto 80: si ya estaba activo se apunta al puerto nuevo; en una instalación
+    # nueva se activa solo cuando pdirect corre (así el 80 funciona sin pasos extra).
+    # Es aditivo: pdirect solo desvía lo que empieza como BHTTP; el WebSocket/SSH sigue igual.
+    if [[ -s "$PDIRECT_FILE" ]] || { [[ ! -e "$PDIRECT_FILE" ]] && pgrep -f pdirect.py >/dev/null; }; then
+        mkdir -p /etc/bhttp; echo "$PORT" > "$PDIRECT_FILE"
+    fi
     systemctl daemon-reload; systemctl enable bhttp >/dev/null 2>&1; systemctl restart bhttp
+    for e in $(extra_ports); do systemctl restart "bhttp-$e"; done
     sleep 2
     if is_active; then
         echo -e "${GREEN}BHTTP escuchando en $PORT (backend SSH: 127.0.0.1:$BPORT)${NC}"
