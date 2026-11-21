@@ -52,7 +52,8 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ─── Auth del admin ───────────────────────────────────────────
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'DEFAULT_TOKEN_REDACTED';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+if (!ADMIN_TOKEN || ADMIN_TOKEN.length < 24) { console.error('ADMIN_TOKEN es obligatorio (minimo 24 caracteres). No se usa ningun valor por defecto.'); process.exit(1); }
 const requireAdmin = (req, res, next) => {
     const token = req.headers['x-admin-token'] || req.query.token;
     if (token !== ADMIN_TOKEN) return res.status(401).json({ error: 'No autorizado' });

@@ -16,7 +16,8 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
-    secret: 'SESSION_SECRET_REDACTED',
+    // El secreto de sesion NO va en el codigo: SESSION_SECRET (variable de entorno) o uno aleatorio por arranque.
+    secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
     resave: false,
     saveUninitialized: false,
     cookie: { maxAge: 86400000, sameSite: 'lax', httpOnly: true }

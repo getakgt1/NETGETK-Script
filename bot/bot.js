@@ -8,12 +8,27 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios       = require('axios');
 
 // ─── Configuración ────────────────────────────────────────────
-const BOT_TOKEN='BOT_TOKEN_REDACTED';
-const ADMIN_IDS = [TELEGRAM_ID_REDACTED];
-const LICENSE_SERVER = 'http://127.0.0.1:3000';
-const ADMIN_TOKEN = 'ADMIN_TOKEN_REDACTED';
+// Los secretos NO van en el codigo (este repositorio es publico): se leen de variables de entorno (archivo .env, ignorado por git).
+//   BOT_TOKEN       token del bot (BotFather)
+//   ADMIN_IDS       IDs numericos de Telegram con permisos, separados por comas
+//   ADMIN_TOKEN     el mismo token que usa el license-server (cabecera x-admin-token)
+//   LICENSE_SERVER  (opcional) URL del license-server, por defecto http://127.0.0.1:3000
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(x => parseInt(x.trim(), 10)).filter(Number.isFinite);
+const LICENSE_SERVER = process.env.LICENSE_SERVER || 'http://127.0.0.1:3000';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+if (!BOT_TOKEN || !ADMIN_TOKEN || ADMIN_IDS.length === 0) {
+    console.error('Faltan variables: BOT_TOKEN, ADMIN_TOKEN y ADMIN_IDS son obligatorias (ver bot/.env.example).');
+    process.exit(1);
+}
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// Polling por IPv4 y con tiempo límite: el IPv6 de esta VPS hacia Telegram es
+// intermitente y una conexión larga colgada dejaba al bot sordo por horas
+// (sin error, sin reintento). Con timeout, esa conexión falla y se reintenta sola.
+const bot = new TelegramBot(BOT_TOKEN, {
+    polling: { interval: 300, autoStart: true, params: { timeout: 20 } },
+    request: { agentOptions: { keepAlive: true, family: 4 }, timeout: 35000 }
+});
 const api = axios.create({
     baseURL: LICENSE_SERVER,
     headers: { 'x-admin-token': ADMIN_TOKEN, 'Content-Type': 'application/json' }

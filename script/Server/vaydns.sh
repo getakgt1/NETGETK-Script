@@ -77,7 +77,7 @@ install_vaydns() {
         systemctl stop hysteria 2>/dev/null
     fi
     echo -ne " ${WHITE}Puerto UDP [443]: ${NC}"; read HY_PORT; [[ -z "$HY_PORT" ]] && HY_PORT=443
-    echo -ne " ${WHITE}Contrasena [DEFAULT_PASSWORD_REDACTED]: ${NC}"; read HY_PASS; [[ -z "$HY_PASS" ]] && HY_PASS="DEFAULT_PASSWORD_REDACTED"
+    echo -ne " ${WHITE}Contrasena [aleatoria]: ${NC}"; read HY_PASS; [[ -z "$HY_PASS" ]] && HY_PASS="$(openssl rand -hex 8)" && echo -e " ${GREEN}Contrasena generada: ${HY_PASS}${NC}"
     echo -ne " ${WHITE}UP Mbps [100]: ${NC}"; read UP; [[ -z "$UP" ]] && UP=100
     echo -ne " ${WHITE}DOWN Mbps [100]: ${NC}"; read DOWN; [[ -z "$DOWN" ]] && DOWN=100
     echo ""
