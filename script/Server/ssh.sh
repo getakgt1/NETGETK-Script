@@ -132,6 +132,17 @@ import time
 import traceback
 
 REMOTE_ADDR = "127.0.0.1"
+# BHTTP por el mismo puerto: un cliente BHTTP empieza con un byte de modo 0-4 (binario);
+# ningun metodo HTTP, TLS ni banner SSH empieza asi. Esas conexiones van al servidor BHTTP.
+BHTTP_PORT = int(os.environ.get("PDIRECT_BHTTP_PORT", "8445"))
+
+# Dropbear limita las conexiones SIN autenticar por IP de origen; como todo el trafico del
+# puerto entra por loopback, compartia un solo cupo. Cada conexion sale desde una 127.0.0.X
+# distinta (127.0.0.2 - 127.0.0.251) y el destino sigue siendo 127.0.0.1:2222.
+import itertools
+_LO_N = itertools.count(os.getpid())
+def lo_source():
+    return "127.0.0.%d" % (2 + next(_LO_N) % 250)
 BUFFER_SIZE = 65536
 PIPE_SIZE = 1048576
 F_SETPIPE_SZ = 1031
@@ -175,7 +186,7 @@ def get_ssh_port():
     # script) — un SSH_PORT viejo/incorrecto en config.conf no debe pisar
     # esto, ya que dropbear en 2222 es justo lo que falcon-proxy necesita.
     try:
-        s = socket.create_connection(("127.0.0.1", 2222), timeout=1)
+        s = socket.create_connection(("127.0.0.1", 2222), timeout=1, source_address=("127.0.0.252", 0))
         s.close()
         return 2222
     except Exception:
@@ -335,11 +346,20 @@ def handler(client_socket, address, listen_port):
         if not data:
             return
         remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote.connect((REMOTE_ADDR, REMOTE_PORT))
+        try:
+            remote.bind((lo_source(), 0))
+        except OSError:
+            pass
+        bh_http = bool(BHTTP_PORT) and data.startswith(b"POST /bh/")
+        if BHTTP_PORT and (bh_http or (not is_http(data) and data[:1] in (b"\x00", b"\x01", b"\x02", b"\x03", b"\x04"))):
+            dbg(f"{address} | BHTTP -> 127.0.0.1:{BHTTP_PORT}")
+            remote.connect((REMOTE_ADDR, BHTTP_PORT))
+        else:
+            remote.connect((REMOTE_ADDR, REMOTE_PORT))
         tune(remote)
         session = session_open(remote, address, listen_port, data)
 
-        if is_http(data):
+        if is_http(data) and not bh_http:
             remote.settimeout(5)
             banner = b""
             try:
