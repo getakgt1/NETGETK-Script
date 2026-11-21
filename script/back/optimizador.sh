@@ -277,6 +277,25 @@ GTKEOF
         fi
     fi
 
+    # ── 4b. Prioridad de BHTTP y dropbear ───────────────────────────────────────
+    # Como en el VPS 82: con la CPU compartida y cargada, estos dos mantienen su turno antes que el resto (Nice -2, suave).
+    # Un drop-in por servicio existente; se aplica ya con renice al proceso principal, sin reiniciar nada.
+    say "${CYAN}  → Prioridad de BHTTP y dropbear...${NC}"
+    local pu pchg=0 pmain
+    for pu in dropbear bhttp $(ls /etc/systemd/system/bhttp-[0-9]*.service 2>/dev/null | sed -E 's#.*/(bhttp-[0-9]+)\.service#\1#'); do
+        systemctl cat "$pu" >/dev/null 2>&1 || continue
+        if put "/etc/systemd/system/${pu}.service.d/zz-prioridad.conf" <<'GTKEOF'
+[Service]
+Nice=-2
+GTKEOF
+        then
+            pchg=1
+            pmain=$(systemctl show "$pu" -p MainPID --value 2>/dev/null)
+            [[ "$pmain" =~ ^[0-9]+$ ]] && (( pmain > 0 )) && renice -n -2 -p "$pmain" >/dev/null 2>&1
+        fi
+    done
+    if (( pchg )); then systemctl daemon-reload; ok "BHTTP y dropbear con prioridad Nice -2 (conexiones nuevas la heredan)"; else same "prioridad de BHTTP/dropbear"; fi
+
     # ── 5. stunnel (si el modulo SSL ya lo instalo) ──────────
     if [[ -f /etc/stunnel/stunnel.conf ]] && ! grep -q '^sessionCacheSize' /etc/stunnel/stunnel.conf; then
         say "${CYAN}  → stunnel...${NC}"
@@ -516,6 +535,7 @@ revert_system() {
     if [[ -f /etc/stunnel/stunnel.conf.pre-gtkvpn ]]; then
         mv -f /etc/stunnel/stunnel.conf.pre-gtkvpn /etc/stunnel/stunnel.conf; systemctl try-restart stunnel4 2>/dev/null
     fi
+    rm -f /etc/systemd/system/dropbear.service.d/zz-prioridad.conf /etc/systemd/system/bhttp.service.d/zz-prioridad.conf /etc/systemd/system/bhttp-[0-9]*.service.d/zz-prioridad.conf
     sed -i '/^DROPBEAR_RECEIVE_WINDOW=/d; /^DROPBEAR_EXTRA_ARGS=/d' /etc/default/dropbear 2>/dev/null
     systemctl daemon-reload; sysctl --system >/dev/null 2>&1
     systemctl reload ssh 2>/dev/null; systemctl try-restart dropbear fail2ban systemd-journald rsyslog 2>/dev/null
