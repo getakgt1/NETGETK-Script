@@ -145,6 +145,13 @@ GTKEOF
         same "Kernel"
     fi
     sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr || warn "BBR no disponible en este kernel"
+    # default_qdisc solo afecta a colas NUEVAS: la de la tarjeta ya creada (fq_codel por defecto en Ubuntu)
+    # se cambia a fq en caliente, que es el encolado que BBR necesita. Tras un reinicio el sysctl ya la crea fq.
+    if command -v tc >/dev/null 2>&1; then
+        for _if in $(ip -o route show default 2>/dev/null | awk '{print $5}' | sort -u); do
+            tc qdisc show dev "$_if" 2>/dev/null | head -1 | grep -q ' fq ' || tc qdisc replace dev "$_if" root fq 2>/dev/null
+        done
+    fi
 
     # ── 2. Reparto de red entre nucleos (RPS/XPS) ────────────
     say "${CYAN}  → Reparto de red entre nucleos...${NC}"
