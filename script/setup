@@ -163,6 +163,7 @@ SCRIPTS=(
     "Server/slowdns.sh"
     "Server/dnstt-http.sh"
     "Server/udp.sh"
+    "Server/badvpn.sh"
     "Server/vaydns.sh"
     "Server/falcon-proxy.sh"
     "Server/falconproxy"

@@ -248,6 +248,15 @@ GTKEOF
     # ── 4. Dropbear ──────────────────────────────────────────
     if [[ -f /etc/default/dropbear ]]; then
         say "${CYAN}  → Dropbear...${NC}"
+        # Sin DROPBEAR_PORT la unidad de Ubuntu arranca con -p "" y dropbear queda caído: se fija el 2222
+        # estándar del proyecto si falta (p. ej. si el optimizador corre antes que el módulo SSH).
+        if ! grep -q '^DROPBEAR_PORT=' /etc/default/dropbear; then
+            echo 'DROPBEAR_PORT=2222' >> /etc/default/dropbear
+            CHANGES=$((CHANGES + 1))
+            systemctl reset-failed dropbear 2>/dev/null
+            systemctl restart dropbear 2>/dev/null
+            ok "Dropbear: puerto 2222 fijado (faltaba)"
+        fi
         if grep -qx 'DROPBEAR_RECEIVE_WINDOW=262144' /etc/default/dropbear && \
            grep -qx 'DROPBEAR_EXTRA_ARGS="-K 30 -I 0"' /etc/default/dropbear; then
             same "Dropbear"

@@ -11,6 +11,15 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 
 INSTALL_DIR="/etc/gtkvpn"
+# Deja DROPBEAR_PORT=2222 aunque la línea no exista o venga comentada (un "sed s///" no añade líneas:
+# sin puerto, la unidad de Ubuntu arranca dropbear con -p "" y falla).
+set_dropbear_port() {
+    local f=/etc/default/dropbear
+    touch "$f"
+    sed -i '/^#\?DROPBEAR_PORT=/d' "$f"
+    echo 'DROPBEAR_PORT=2222' >> "$f"
+}
+
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter para continuar...${NC}"; read; }
 
 menu_ssh() {
@@ -81,8 +90,7 @@ install_ssh_ws() {
     systemctl disable nginx 2>/dev/null
 
     # Configurar Dropbear en puerto 2222
-    sed -i 's/#DROPBEAR_PORT=22/DROPBEAR_PORT=2222/' /etc/default/dropbear
-    sed -i 's/^DROPBEAR_PORT=.*/DROPBEAR_PORT=2222/' /etc/default/dropbear
+    set_dropbear_port
     # Generar llaves faltantes de Dropbear
     [[ ! -f /etc/dropbear/dropbear_dss_host_key ]] && dropbearkey -t dss -f /etc/dropbear/dropbear_dss_host_key 2>/dev/null
     [[ ! -f /etc/dropbear/dropbear_rsa_host_key ]] && dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key 2>/dev/null

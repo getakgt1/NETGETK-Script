@@ -5,6 +5,9 @@ INSTALL_DIR="/etc/gtkvpn"
 UDP_DIR="/root/udp"
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter...${NC}"; read; }
 
+# Compatibilidad: versiones anteriores del manager llamaban "udp.sh badvpn" (este script solo gestiona UDP-Custom)
+if [[ "$1" == "badvpn" ]]; then exec bash "$(dirname "$(readlink -f "$0")")/badvpn.sh"; fi
+
 menu_udp() {
     clear
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

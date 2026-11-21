@@ -53,6 +53,7 @@ copy_file "$INSTALL_DIR/Server/hysteria.sh"   "$REPO_DIR/script/Server/hysteria.
 copy_file "$INSTALL_DIR/Server/ssh.sh"        "$REPO_DIR/script/Server/ssh.sh"
 copy_file "$INSTALL_DIR/Server/ssl.sh"        "$REPO_DIR/script/Server/ssl.sh"
 copy_file "$INSTALL_DIR/Server/udp.sh"        "$REPO_DIR/script/Server/udp.sh"
+copy_file "$INSTALL_DIR/Server/badvpn.sh"     "$REPO_DIR/script/Server/badvpn.sh"
 copy_file "$INSTALL_DIR/Server/slowdns.sh"    "$REPO_DIR/script/Server/slowdns.sh"
 copy_file "$INSTALL_DIR/Server/dnstt-http.sh" "$REPO_DIR/script/Server/dnstt-http.sh"
 copy_file "$INSTALL_DIR/Server/socks5.sh"     "$REPO_DIR/script/Server/socks5.sh"

@@ -18,6 +18,15 @@ PROXY_CONFIG="/etc/gtkvpn/falcon-proxy.conf"
 PROXY_BIN="/usr/local/bin/pdirect.py"
 PROXY_SERVICE="/etc/systemd/system/falcon-proxy.service"
 
+# Deja DROPBEAR_PORT=2222 aunque la línea no exista o venga comentada (un "sed s///" no añade líneas:
+# sin puerto, la unidad de Ubuntu arranca dropbear con -p "" y falla).
+set_dropbear_port() {
+    local f=/etc/default/dropbear
+    touch "$f"
+    sed -i '/^#\?DROPBEAR_PORT=/d' "$f"
+    echo 'DROPBEAR_PORT=2222' >> "$f"
+}
+
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter para continuar...${NC}"; read; }
 
 # ── Leer config guardada ──────────────────────────────────────
@@ -667,8 +676,7 @@ PDEOF
 
     # Configurar Dropbear como backend SSH en 2222
     apt-get install -y dropbear -qq 2>/dev/null
-    sed -i 's/#DROPBEAR_PORT=22/DROPBEAR_PORT=2222/' /etc/default/dropbear 2>/dev/null
-    sed -i 's/^DROPBEAR_PORT=.*/DROPBEAR_PORT=2222/' /etc/default/dropbear 2>/dev/null
+    set_dropbear_port 2>/dev/null
     sed -i 's/^NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null
     [[ ! -f /etc/dropbear/dropbear_rsa_host_key ]] && \
         dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key 2>/dev/null

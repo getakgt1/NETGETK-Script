@@ -31,8 +31,19 @@ json.dump(c, open(p, "w"), indent=2)
 PYSTATS
 }
 
+# El instalador oficial deja /var/log/xray con dueño "xray" y la unidad con User=xray; GTKVPN corre
+# Xray como root (como en producción) con límites altos. Idempotente: se reaplica antes de cada arranque.
+xray_prepare_service() {
+    mkdir -p /var/log/xray /etc/systemd/system/xray.service.d
+    chown -R root:root /var/log/xray 2>/dev/null
+    if [[ ! -f /etc/systemd/system/xray.service.d/20-gtkvpn.conf ]]; then
+        printf '[Service]\nUser=root\nLimitNPROC=10000\nLimitNOFILE=1000000\n' > /etc/systemd/system/xray.service.d/20-gtkvpn.conf
+        systemctl daemon-reload
+    fi
+}
 xray_restart() {
     ensure_xray_stats
+    xray_prepare_service
     systemctl restart xray
 }
 press_enter() { echo -ne "\n${YELLOW}Presiona Enter para continuar...${NC}"; read; }
@@ -135,12 +146,20 @@ PYEOF
 }
 install_xray() {
     echo ""; echo -e "${CYAN}[*] Instalando Xray...${NC}"
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u root 2>/dev/null
-    if [[ -f /usr/local/bin/xray ]]; then
-        echo -e "${GREEN}[+] Xray instalado: $(/usr/local/bin/xray version | head -1)${NC}"
-        mkdir -p /var/log/xray; setup_vless
+    # El instalador oficial ya no acepta "-u root" (daba "unknown option" y Xray no se instalaba):
+    # se descarga a un archivo, se ejecuta sin esa opción y su salida queda en un log visible.
+    local inst=/tmp/xray-install.sh
+    if curl -fsSL --max-time 90 -o "$inst" https://github.com/XTLS/Xray-install/raw/main/install-release.sh; then
+        bash "$inst" install > /tmp/xray-install.log 2>&1
     else
-        echo -e "${RED}[!] Error instalando Xray${NC}"; press_enter; menu_xray
+        echo -e "${RED}[!] No se pudo descargar el instalador de Xray (¿sin acceso a github.com?)${NC}"
+    fi
+    rm -f "$inst"
+    if [[ -x /usr/local/bin/xray ]]; then
+        echo -e "${GREEN}[+] Xray instalado: $(/usr/local/bin/xray version | head -1)${NC}"
+        xray_prepare_service; setup_vless
+    else
+        echo -e "${RED}[!] Error instalando Xray${NC}"; tail -5 /tmp/xray-install.log 2>/dev/null; press_enter; menu_xray
     fi
 }
 setup_vless() {
