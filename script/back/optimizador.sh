@@ -375,6 +375,87 @@ GTKEOF
         same "journald"
     fi
 
+    # ── 7b. Protección de logs (syslog sin control = disco lleno) ─────────────────
+    # En el VPS 82, badvpn-udpgw llegó a escribir 30 GB de syslog en 2 h al quedarse sin descriptores de archivo.
+    # Se descartan los mensajes repetitivos conocidos, se limita el tamaño del syslog y se rota Xray.
+    say "${CYAN}  → Protección de logs...${NC}"
+    local RS=0
+    if command -v rsyslogd >/dev/null 2>&1; then
+        put /etc/rsyslog.d/00-drop-vpn-noise.conf <<'GTKEOF' && RS=1
+if $programname == 'sshd' and $msg contains 'connect_to' and $msg contains 'port 123' then stop
+if $programname == 'sshd' and $msg contains 'connect_to' and $msg contains 'port 853' then stop
+if $programname == 'stunnel' and $msg contains 'unexpected eof while reading' then stop
+GTKEOF
+        put /etc/rsyslog.d/00-zz-drop-badvpn-errors.conf <<'GTKEOF' && RS=1
+# badvpn-udpgw escribe estos errores en bucle cuando se queda sin descriptores de archivo
+if $programname == 'badvpn-udpgw' and ($msg contains 'BConnection_Init failed' or $msg contains 'accept failed') then stop
+GTKEOF
+        if (( RS )); then
+            if rsyslogd -N1 >/dev/null 2>&1; then
+                systemctl restart rsyslog 2>/dev/null
+                ok "rsyslog: se descarta el ruido repetitivo (badvpn, sshd, stunnel)"
+            else
+                rm -f /etc/rsyslog.d/00-drop-vpn-noise.conf /etc/rsyslog.d/00-zz-drop-badvpn-errors.conf
+                warn "rsyslog: la configuración no valida; filtros no aplicados"
+            fi
+        else
+            same "filtros de rsyslog"
+        fi
+    fi
+    # El tope de syslog va en un archivo propio (no en /etc/logrotate.d) para no duplicar la entrada de /var/log/syslog.
+    put /etc/gtkvpn/logrotate-syslog-cap.conf <<'GTKEOF'
+/var/log/syslog
+{
+    size 200M
+    rotate 2
+    compress
+    delaycompress
+    missingok
+    notifempty
+    postrotate
+        systemctl kill -s HUP rsyslog.service
+    endscript
+}
+GTKEOF
+    put /etc/logrotate.d/gtkvpn-xray <<'GTKEOF'
+/var/log/xray/*.log {
+    daily
+    rotate 3
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    copytruncate
+}
+GTKEOF
+    put /usr/local/bin/gtkvpn-disk-autoclean.sh 755 <<'GTKEOF'
+#!/bin/bash
+# GTKVPN: si el disco pasa del 85 %, rota y vacia logs para evitar que el VPS se quede sin espacio.
+THRESHOLD=85
+USE=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
+if [ "$USE" -ge "$THRESHOLD" ]; then
+    LOG="/var/log/gtkvpn-disk-autoclean.log"
+    echo "[$(date)] Disco al ${USE}% - limpieza automatica" >> "$LOG"
+    if [ -f /var/log/syslog ] && [ "$(stat -c%s /var/log/syslog)" -gt 104857600 ]; then
+        cp /var/log/syslog "/var/log/syslog.emergency.$(date +%s)" && gzip /var/log/syslog.emergency.* 2>/dev/null
+        truncate -s 0 /var/log/syslog
+        echo "[$(date)] syslog truncado" >> "$LOG"
+    fi
+    logrotate -f /etc/logrotate.conf >/dev/null 2>&1
+    journalctl --vacuum-size=200M >/dev/null 2>&1
+    pm2 flush >/dev/null 2>&1
+    apt-get clean >/dev/null 2>&1
+    find /var/log -name "*.gz" -mtime +7 -delete 2>/dev/null
+    echo "[$(date)] Terminada. Disco ahora: $(df / | tail -1 | awk '{print $5}')" >> "$LOG"
+fi
+GTKEOF
+    put /etc/cron.d/gtkvpn-logs <<'GTKEOF'
+# GTKVPN: tope de syslog (cada 15 min) y limpieza de disco de emergencia
+*/15 * * * * root /usr/sbin/logrotate /etc/gtkvpn/logrotate-syslog-cap.conf >/dev/null 2>&1
+*/15 * * * * root /usr/local/bin/gtkvpn-disk-autoclean.sh
+GTKEOF
+    [[ -f /etc/cron.d/gtkvpn-logs ]] && ok "logs: syslog limitado a 200 MB, Xray rotado y limpieza de disco al 85 %"
+
     # ── 8. Limites de archivos ───────────────────────────────
     # (sin tocar /etc/security/limits.conf: antes se sobrescribia entero)
     if put /etc/security/limits.d/99-gtkvpn.conf <<'GTKEOF'
@@ -429,13 +510,15 @@ revert_system() {
     rm -f /etc/systemd/system/gtkvpn-rps.service /etc/systemd/system/gtkvpn-sysctl-late.service /usr/local/bin/gtkvpn-rps.sh \
           /etc/sysctl.d/99-zz-gtkvpn-speed.conf /etc/modules-load.d/gtkvpn.conf /etc/security/limits.d/99-gtkvpn.conf \
           /etc/systemd/journald.conf.d/99-gtkvpn.conf /etc/systemd/system/xray.service.d/20-gtk-limits.conf \
-          /etc/ssh/sshd_config.d/99-zz-gtkvpn-speed.conf /etc/fail2ban/jail.d/dropbear.conf /etc/fail2ban/filter.d/dropbear.conf
+          /etc/ssh/sshd_config.d/99-zz-gtkvpn-speed.conf /etc/fail2ban/jail.d/dropbear.conf /etc/fail2ban/filter.d/dropbear.conf \
+          /etc/rsyslog.d/00-drop-vpn-noise.conf /etc/rsyslog.d/00-zz-drop-badvpn-errors.conf /etc/gtkvpn/logrotate-syslog-cap.conf \
+          /etc/logrotate.d/gtkvpn-xray /usr/local/bin/gtkvpn-disk-autoclean.sh /etc/cron.d/gtkvpn-logs
     if [[ -f /etc/stunnel/stunnel.conf.pre-gtkvpn ]]; then
         mv -f /etc/stunnel/stunnel.conf.pre-gtkvpn /etc/stunnel/stunnel.conf; systemctl try-restart stunnel4 2>/dev/null
     fi
     sed -i '/^DROPBEAR_RECEIVE_WINDOW=/d; /^DROPBEAR_EXTRA_ARGS=/d' /etc/default/dropbear 2>/dev/null
     systemctl daemon-reload; sysctl --system >/dev/null 2>&1
-    systemctl reload ssh 2>/dev/null; systemctl try-restart dropbear fail2ban systemd-journald 2>/dev/null
+    systemctl reload ssh 2>/dev/null; systemctl try-restart dropbear fail2ban systemd-journald rsyslog 2>/dev/null
     say "${GREEN}  ✓ Optimizaciones quitadas (el swap se conserva).${NC}"
     press_enter
 }
