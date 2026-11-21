@@ -214,6 +214,24 @@ for f in sorted(glob.glob(f"{USERS_DIR}/*_xray.info")):
     for ip in ips:
         add(name, "Xray", ip)
 
+# ── Usuarios de Xray conectados que NO tienen archivo *_xray.info ──────────
+# Los clientes agregados a mano (config manual, plantillas, otro VPS migrado) no tienen .info y su correo no es nombre@gtkvpn:
+# se descubren directamente de la API de estadisticas de Xray (todos los que estan en linea) y se muestran con la parte
+# del correo anterior a la @. Solo se aceptan correos con caracteres seguros (el correo va a un comando).
+if online is not None:
+    xray_ok = True                                    # la API de estadisticas respondio
+    _conocidos = {f"{os.path.basename(f)[:-len('_xray.info')]}@gtkvpn" for f in glob.glob(f"{USERS_DIR}/*_xray.info")}
+    for em in sorted(online - _conocidos):
+        if not re.fullmatch(r"[A-Za-z0-9._+-]{1,60}@[A-Za-z0-9._-]{1,60}", em):
+            continue
+        out = sh(f"xray api statsonlineiplist --server={XRAY_API} -email '{em}' 2>/dev/null")
+        try:
+            ips = list(json.loads(out).get("ips", {}).keys())
+        except ValueError:
+            continue
+        for ip in ips:
+            add(em.split("@", 1)[0], "Xray", ip)
+
 # ── UDP: totales (no atribuibles a un usuario) ───────────────────────────
 udp = {}
 for svc in ("udp-custom", "hysteria-udp", "hysteria"):
