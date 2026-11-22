@@ -29,6 +29,11 @@ XRAY_API = "127.0.0.1:10085"
 LOOP = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
+def is_loop(ip):
+    """127.0.0.0/8: el servidor BHTTP y pdirect abren cada sesion desde una 127.x distinta (limite de dropbear por IP)."""
+    return ip in LOOP or ip.startswith("127.") or ip.startswith("::ffff:127.")
+
+
 def sh(cmd):
     try:
         return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20).stdout
@@ -96,6 +101,7 @@ def relay_ports():
 # Solo los de los puertos SSH / proxy: en un VPS con miles de conexiones Xray
 # leer todos los sockets con -p tardaba segundos de más.
 owner = {}      # (ip, puerto local) -> nombre del proceso
+ownerpid = {}   # (ip, puerto local) -> pid (para distinguir bhttp-server de pdirect)
 socks = {}      # pid -> [(local, peer)]
 _sshp = conf_ports()
 _flt = " or ".join([f"sport = :{p}" for p in _sshp] + [f"dport = :{p}" for p in _sshp | relay_ports()])
@@ -106,6 +112,7 @@ for line in sh(f"ss -tnpH state established '( {_flt} )'").splitlines():
     local, peer = split_ep(parts[2]), split_ep(parts[3])
     for name, pid in re.findall(r'\("([^"]+)",pid=(\d+)', line):
         owner[local] = name
+        ownerpid[local] = int(pid)
         socks.setdefault(int(pid), []).append((local, peer))
 
 ssh_ports = conf_ports()
@@ -116,15 +123,22 @@ def origin_of(pid):
     for local, peer in socks.get(pid, []):
         if local[1] not in ssh_ports:
             continue
-        if peer[0] not in LOOP:
+        if not is_loop(peer[0]):
             return ("SSH directo" if local[1] == 22 else "Dropbear directo"), peer[0]
         relay = owner.get(peer, "")
+        if relay.startswith("python"):
+            try:
+                rcmd = open(f"/proc/{ownerpid.get(peer, 0)}/cmdline", "rb").read().decode(errors="replace")
+            except OSError:
+                rcmd = ""
+            if "bhttp-server" in rcmd:                  # servidor BHTTP: la IP real del cliente no llega a dropbear
+                return "BHTTP", ""
         if relay.startswith("python"):                  # proxy pdirect
             try:
                 cip, cport, lport = open(f"{SESSION_DIR}/{peer[1]}").read().split()
             except (OSError, ValueError):
                 return "WS/SSL/DNS", ""
-            if cip in LOOP:
+            if is_loop(cip):
                 via = owner.get((cip, int(cport)), "")
                 if via.startswith("stunnel"):
                     return "SSL", ""
